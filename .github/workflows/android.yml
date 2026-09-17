@@ -33,7 +33,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      # ubuntu-latest ships the Android SDK; just make sure our API level and
+      # build-tools are present and the licences are accepted.
+      - name: Android SDK components
+        run: |
+          sdkmanager="$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | tail -n1)"
+          yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$sdkmanager" --install "platforms;android-35" "build-tools;35.0.0" "platform-tools" > /dev/null
+          echo "SDK at $ANDROID_HOME"; ls "$ANDROID_HOME/platforms"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
