@@ -10,6 +10,7 @@ Exit code != 0 on any failure. Run after `node scripts/build-web.mjs`.
 """
 import argparse
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -109,6 +110,82 @@ def main() -> int:
             page.locator("input[data-tool='workout']").click(force=True)
             page.goto(base + "#/", wait_until="networkidle")
             expect(page.locator(".tool-card[data-tool='workout']")).to_have_count(1)
+
+            # ---- workout log: first week, exercises, sets, note, bodyweight, new week
+            page.goto(base + "#/t/workout", wait_until="networkidle")
+            expect(page.locator("[data-testid='workout-empty']")).to_be_visible()
+            page.click("[data-testid='workout-start']")
+            expect(page.locator(".sheet-panel")).to_be_visible()
+            page.click("[data-testid='exercise-add']")
+            page.locator("[data-testid='exercise-name']").nth(0).fill("Pistol Squats")
+            page.click("[data-testid='exercise-add']")
+            page.locator("[data-testid='exercise-name']").nth(1).fill("Dumbbell Rows")
+            page.locator("[data-testid='exercise-weight']").nth(1).fill("24kg")
+            page.screenshot(path=str(SHOTS / "08-workout-exercises.png"))
+            page.click(".sheet-panel .btn-primary")  # Done
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            grid = page.locator("[data-testid='workout-grid']")
+            expect(grid).to_be_visible()
+            assert grid.locator("tbody tr").count() == 3, "expected Mon/Wed/Fri rows"
+            assert grid.locator("[data-testid='exercise-header']").count() == 2
+
+            # log Mon: 8, 8, 8 for squats then 12 with a mark and a note for rows
+            grid.locator("td.wk-cell").nth(0).locator("button").click()
+            expect(page.locator("[data-testid='set-input']")).to_be_visible()
+            for reps in ("8", "8", "8"):
+                page.fill("[data-testid='set-input']", reps)
+                page.click("[data-testid='set-next']")
+            page.fill("[data-testid='set-input']", "12")
+            page.locator(".chip-mark", has_text="!").first.click()
+            expect(page.locator("[data-testid='set-input']")).to_have_value("12!")
+            page.locator(".chip", has_text="+ note").click()
+            page.fill("[data-testid='note-input']", "22kg")
+            page.click("[data-testid='note-save']")
+            page.screenshot(path=str(SHOTS / "09-workout-set-editor.png"))
+            page.locator(".sheet-panel button", has_text="Done").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            first_row = grid.locator("tbody tr").nth(0)
+            expect(first_row.locator("td.wk-cell").nth(0)).to_have_text("8")
+            expect(first_row.locator("td.wk-cell").nth(3)).to_have_text("12!1")
+            expect(page.locator("[data-testid='footnotes']")).to_contain_text("22kg")
+
+            # colour one set green, star another, tint a whole day
+            first_row.locator("td.wk-cell").nth(0).locator("button").click()
+            page.locator(".sheet-panel .swatch").nth(1).click()  # green
+            page.locator(".sheet-panel button", has_text="Done").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            expect(first_row.locator("td.wk-cell").nth(0)).to_have_class(re.compile(r"wk-tinted"))
+            first_row.locator("td.wk-cell").nth(1).locator("button").click()
+            page.locator(".sheet-panel .swatch-star").first.click()
+            page.locator(".seg", has_text="Day").click()
+            page.locator(".sheet-panel .swatch").nth(4).click()  # gold, whole day
+            page.locator(".sheet-panel button", has_text="Done").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            assert first_row.locator("td.wk-cell").nth(1).locator(".wk-star").count() == 1
+            expect(first_row.locator("th")).to_have_class(re.compile(r"wk-tinted"))
+
+            # bodyweight via the day header
+            first_row.locator("[data-testid='day-header']").click()
+            page.fill("[data-testid='day-bodyweight']", "97.1")
+            page.locator(".sheet-panel button", has_text="Done").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            expect(first_row.locator("[data-testid='day-header']")).to_contain_text("97.1 kg")
+            page.screenshot(path=str(SHOTS / "10-workout-grid.png"))
+
+            # new week copies the exercises
+            label_before = page.locator("[data-testid='week-label']").inner_text()
+            page.click("[data-testid='week-menu']")
+            page.click("[data-testid='menu-new-week']")
+            expect(page.locator("[data-testid='week-label']")).not_to_have_text(label_before)
+            assert page.locator("[data-testid='exercise-header']").count() == 2
+            expect(page.locator("tbody tr").nth(0).locator("td.wk-cell").nth(0)).to_have_text("")
+
+            # data survives reload; tool settings page renders
+            page.reload(wait_until="networkidle")
+            expect(page.locator("[data-testid='workout-grid']")).to_be_visible()
+            page.goto(base + "#/t/workout/settings", wait_until="networkidle")
+            expect(page.locator("[data-testid='workout-settings']")).to_be_visible()
+            page.screenshot(path=str(SHOTS / "11-workout-settings.png"))
 
             # light theme render
             light = browser.new_context(viewport={"width": 412, "height": 915}, color_scheme="light")

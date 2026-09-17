@@ -1,27 +1,30 @@
-// Placeholder for the workout log. The real tool (Excel-style grid with the
-// dot/asterisk/colour notation) lands once the notation questions are settled.
+// Workout log: Excel-style weekly grid with numbered footnotes, colour codes,
+// marks and optional bodyweight. Pure logic in model.ts, persistence in
+// service.ts, UI in view.ts / editors.ts / settings-view.ts.
 
-import { h, replace, svg } from '../../core/dom.js';
-import { registerTool } from '../../core/registry.js';
+import { registerTool, type ToolContext } from '../../core/registry.js';
+import { signal } from '../../core/store.js';
 import { icons } from '../../ui/icons.js';
+import { WorkoutService } from './service.js';
+import { mountWorkoutView } from './view.js';
+
+let service: WorkoutService | null = null;
+const status = signal<string | null>(null);
 
 registerTool({
   id: 'workout',
   name: 'Workout log',
-  description: 'Sets, reps and notes in a spreadsheet-style grid.',
+  description: 'Sets, reps and notes in a spreadsheet-style weekly grid.',
   icon: icons.dumbbell,
   order: 20,
-  mount(host) {
-    replace(
-      host,
-      h(
-        'div',
-        { class: 'empty' },
-        svg(icons.dumbbell, 'icon icon-xl'),
-        h('p', null, 'Coming next.'),
-        h('p', { class: 'muted' }, 'The grid, colour codes and dot-notes are being built after the notation is confirmed.'),
-      ),
-    );
-    return { unmount: () => undefined };
+  status,
+  async init(ctx: ToolContext) {
+    service = new WorkoutService(ctx);
+    service.status.subscribe((s) => status.set(s));
+    await service.init();
+  },
+  mount(host, ctx) {
+    if (!service) throw new Error('Workout service not initialised');
+    return mountWorkoutView(host, ctx, service);
   },
 });

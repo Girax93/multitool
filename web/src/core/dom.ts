@@ -77,7 +77,7 @@ export function svg(markup: string, cls = 'icon'): SVGElement {
   const tpl = document.createElement('template');
   tpl.innerHTML = markup.trim();
   const el = tpl.content.firstElementChild as SVGElement;
-  el.classList.add(cls);
+  el.classList.add(...cls.split(/\s+/).filter(Boolean));
   el.setAttribute('aria-hidden', 'true');
   return el;
 }

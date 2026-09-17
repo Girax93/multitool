@@ -26,4 +26,13 @@ export const icons = {
   bell: base('<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>'),
   download: base('<path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/>'),
   edit: base('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'),
+  close: base('<path d="M18 6L6 18"/><path d="M6 6l12 12"/>'),
+  chevronLeft: base('<path d="M15 18l-6-6 6-6"/>'),
+  chevronRight: base('<path d="M9 18l6-6-6-6"/>'),
+  more: base('<circle cx="12" cy="5" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="19" r="1.5" fill="currentColor"/>'),
+  star: base('<path d="M12 2.5l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 17.4 6.1 20.5l1.2-6.5L2.5 9.4l6.6-.9z" fill="currentColor" stroke="none"/>'),
+  arrowUp: base('<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>'),
+  arrowDown: base('<path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/>'),
+  upload: base('<path d="M12 15V3"/><path d="M7 8l5-5 5 5"/><path d="M4 21h16"/>'),
+  scale: base('<path d="M12 3v18"/><path d="M5 7h14"/><path d="M3 15l2-8 2 8a2 2 0 0 1-4 0z"/><path d="M17 15l2-8 2 8a2 2 0 0 1-4 0z"/>'),
 };

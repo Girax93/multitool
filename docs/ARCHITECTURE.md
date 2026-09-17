@@ -29,7 +29,7 @@ core/router.ts     hash routes: #/  #/t/<tool>[/sub]  #/settings
 core/settings.ts   disabled tools, theme
 core/store.ts      Signal<T>, Emitter<T>
 core/dom.ts        h() element builder — the only "framework"
-ui/                shell (top bar + host), home grid, settings page, toasts, icons
+ui/                shell (top bar + host), home grid, settings page, toasts, icons, bottom sheet (sheet.ts)
 tools/<id>/        model.ts (pure, tested) · service.ts (background) · view.ts (DOM) · index.ts (register)
 ```
 
