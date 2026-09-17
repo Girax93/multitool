@@ -1,0 +1,22 @@
+# web
+web/dist/
+web/tests/screenshots/
+web/icons/*.png
+node_modules/
+
+# android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/app/*.iml
+*.jks
+*.keystore
+
+# misc
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc

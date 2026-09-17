@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MultiTool</string>
+    <string name="channel_timers">Timers</string>
+    <string name="channel_timers_desc">Rings when a timer finishes</string>
+    <string name="channel_general">General</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_restart">Restart</string>
+    <string name="timer_finished">Timer finished</string>
+</resources>

@@ -1,0 +1,105 @@
+name: Web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'scripts/**'
+      - '.github/workflows/web.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build, test, smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install TypeScript (same version as the dev workspace) and sharp (icons)
+        run: |
+          npm install -g typescript@6.0.3 sharp
+          echo "NODE_PATH=$(npm root -g)" >> "$GITHUB_ENV"
+
+      - name: Build + unit tests
+        run: node scripts/build-web.mjs
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Playwright
+        run: |
+          pip install playwright==1.56.0
+          python -m playwright install --with-deps chromium
+
+      - name: Smoke test (headless Chromium, phone viewport)
+        run: python web/tests/smoke.py
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: web/tests/screenshots/
+          if-no-files-found: ignore
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  verify:
+    name: Verify live site
+    needs: deploy
+    runs-on: ubuntu-latest
+    # Informational: a failure here (DNS/CDN lag) must not mark the deploy red.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Playwright
+        run: |
+          pip install playwright==1.56.0
+          python -m playwright install --with-deps chromium
+      - name: Wait for the deployed version to be served
+        run: |
+          set -e
+          url="https://multitool.ariilden.com/"
+          want="$(git rev-parse --short=7 HEAD)"
+          for i in $(seq 1 30); do
+            if curl -fsSL "${url}js/core/version.js" | grep -q "$want"; then
+              echo "live version contains $want"; exit 0
+            fi
+            echo "attempt $i: not yet"; sleep 10
+          done
+          echo "::warning::Live site did not serve build $want within 5 minutes (DNS or CDN lag?)"
+      - name: Smoke test against the live site
+        run: python web/tests/smoke.py --base-url https://multitool.ariilden.com/
