@@ -224,6 +224,15 @@ def main() -> int:
             page.goto(base + "#/settings", wait_until="networkidle")
             expect(page.locator("[data-testid='sync-status']")).to_contain_text("Sync is off")
             expect(page.locator("[data-testid='sync-indicator']")).to_be_hidden()
+            if args.base_url:
+                # Browsers block a public https page from talking to a loopback API
+                # (private network access), so the two-device scenario only runs
+                # against the local build; the deployed site gets the render check above.
+                print("sync scenario skipped against a deployed site")
+                if errors:
+                    failures.append("console/page errors: " + " | ".join(errors))
+                browser.close()
+                return finish(failures)
             page.click("[data-testid='sync-enable']")
             code_el = page.locator("[data-testid='link-code']")
             expect(code_el).to_have_text(re.compile(r"^[A-Z2-9]{4}-[A-Z2-9]{4}$"), timeout=20_000)
@@ -284,7 +293,10 @@ def main() -> int:
         if server:
             server.terminate()
         api.terminate()
+    return finish(failures)
 
+
+def finish(failures: list[str]) -> int:
     if failures:
         print("SMOKE FAILED")
         for f in failures:
