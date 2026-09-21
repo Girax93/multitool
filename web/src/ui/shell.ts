@@ -16,8 +16,17 @@ export function mountShell(root: HTMLElement, app: App): void {
     { class: 'iconbtn', 'aria-label': 'Settings', onClick: () => navigate('#/settings') },
     svg(icons.settings),
   );
+  // Sync indicator: hidden while sync is off; otherwise shows the state and opens Settings.
+  const syncBtn = h('button', { class: 'iconbtn sync-indicator', 'aria-label': 'Sync status', hidden: true, dataset: { testid: 'sync-indicator' }, onClick: () => navigate('#/settings') });
+  app.sync.state.subscribe((s) => {
+    syncBtn.hidden = s.status === 'off';
+    syncBtn.dataset['status'] = s.status;
+    const icon = s.status === 'offline' || s.status === 'error' ? icons.cloudOff : s.status === 'syncing' ? icons.cloudSync : icons.cloud;
+    replace(syncBtn, svg(icon));
+    syncBtn.title = s.status === 'error' ? `Sync problem: ${s.error ?? ''}` : s.status === 'offline' ? 'Offline — will sync later' : s.status === 'syncing' ? 'Syncing…' : 'Synced';
+  });
   const host = h('main', { class: 'host' });
-  replace(root, h('header', { class: 'topbar' }, backBtn, title, settingsBtn), host);
+  replace(root, h('header', { class: 'topbar' }, backBtn, title, syncBtn, settingsBtn), host);
 
   let current: ToolInstance | null = null;
   let currentKey = '';

@@ -55,6 +55,8 @@ function walk(dir, base = dir) {
 
 // 0. icons (PNGs are build outputs; only icon.svg is committed)
 run(process.execPath, [join(root, 'scripts', 'make-icons.mjs')]);
+// 0b. the sync Worker (its handler is exercised by the web unit tests)
+if (!skipTests) run(process.execPath, [join(root, 'scripts', 'build-worker.mjs'), '--skip-tests']);
 
 // 1. compile
 rmSync(dist, { recursive: true, force: true });

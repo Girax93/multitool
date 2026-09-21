@@ -34,5 +34,12 @@ export const icons = {
   arrowUp: base('<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>'),
   arrowDown: base('<path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/>'),
   upload: base('<path d="M12 15V3"/><path d="M7 8l5-5 5 5"/><path d="M4 21h16"/>'),
+  cloud: base('<path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A7 7 0 0 0 4.3 12.5 3.5 3.5 0 0 0 6 19z"/>'),
+  cloudOff: base('<path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A7 7 0 0 0 4.3 12.5 3.5 3.5 0 0 0 6 19z"/><path d="M3 3l18 18"/>'),
+  cloudSync: base('<path d="M17.5 19a4.5 4.5 0 0 0 .5-8.97A7 7 0 0 0 4.3 12.5 3.5 3.5 0 0 0 6 19z"/><path d="M9.5 14.5h5"/><path d="M12.5 12.5l2 2-2 2"/>'),
+  link: base('<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.5-1.5"/>'),
+  key: base('<circle cx="8" cy="15" r="4"/><path d="M10.9 12.1L21 2"/><path d="M15 8l3 3"/><path d="M18 5l3 3"/>'),
+  refresh: base('<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>'),
+  copy: base('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'),
   scale: base('<path d="M12 3v18"/><path d="M5 7h14"/><path d="M3 15l2-8 2 8a2 2 0 0 1-4 0z"/><path d="M17 15l2-8 2 8a2 2 0 0 1-4 0z"/>'),
 };

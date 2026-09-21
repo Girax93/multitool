@@ -1,0 +1,101 @@
+name: Sync API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      - 'scripts/build-worker.mjs'
+      - '.github/workflows/worker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Type-check + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install TypeScript (same version as the dev workspace)
+        run: npm install -g typescript@6.0.3
+      - run: node scripts/build-worker.mjs
+
+  deploy:
+    name: Deploy to Cloudflare
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: dd4986130a0053a20b83e627b1b91a86
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check for the API token
+        id: token
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::warning::CLOUDFLARE_API_TOKEN is not set — skipping the deploy. Add it under Settings → Secrets → Actions."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install wrangler
+        if: steps.token.outputs.present == 'true'
+        run: npm install -g wrangler@4
+
+      - name: Create the D1 database if it does not exist
+        if: steps.token.outputs.present == 'true'
+        run: |
+          set -e
+          id="$(npx wrangler d1 list --json | node -e '
+            let s = ""; process.stdin.on("data", (c) => (s += c)).on("end", () => {
+              const db = JSON.parse(s).find((d) => d.name === "multitool");
+              process.stdout.write(db ? db.uuid : "");
+            });')"
+          if [ -z "$id" ]; then
+            echo "creating D1 database multitool"
+            npx wrangler d1 create multitool
+            id="$(npx wrangler d1 list --json | node -e '
+              let s = ""; process.stdin.on("data", (c) => (s += c)).on("end", () => {
+                const db = JSON.parse(s).find((d) => d.name === "multitool");
+                process.stdout.write(db ? db.uuid : "");
+              });')"
+          fi
+          [ -n "$id" ] || { echo "::error::could not determine the D1 database id"; exit 1; }
+          echo "D1 database id: $id"
+          sed -i "s/__D1_DATABASE_ID__/$id/" wrangler.toml
+
+      - name: Apply migrations
+        if: steps.token.outputs.present == 'true'
+        run: npx wrangler d1 migrations apply multitool --remote
+
+      - name: Deploy
+        if: steps.token.outputs.present == 'true'
+        run: npx wrangler deploy
+
+      - name: Verify
+        if: steps.token.outputs.present == 'true'
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS https://api.multitool.ariilden.com/v1/health | grep -q '"ok":true'; then
+              echo "api is live"; exit 0
+            fi
+            echo "attempt $i: not yet"; sleep 15
+          done
+          echo "::warning::api.multitool.ariilden.com did not answer within 5 minutes (custom domain still provisioning?)"

@@ -19,7 +19,10 @@ import {
   type Timer,
 } from './model.js';
 
-const STORAGE_KEY = 'timers';
+/** Pre-sync builds kept all timers in one array under this key; migrated on first start. */
+const LEGACY_KEY = 'timers';
+/** One record per timer, so devices can change different timers without clobbering each other. */
+const PREFIX = 'timers/';
 const TICK_MS = 250;
 
 export class TimerService {
@@ -31,14 +34,18 @@ export class TimerService {
   private ticker: number | undefined;
   private ringer: Ringer | null = null;
   private loaded = false;
+  /** What is on disk, by id, so persist() only writes what changed. */
+  private persisted = new Map<string, Timer>();
 
   constructor(private readonly ctx: ToolContext) {}
 
   async init(): Promise<void> {
-    const stored = (await this.ctx.kv.get<Timer[]>(STORAGE_KEY)) ?? [];
+    const stored = await this.load();
     const now = Date.now();
     this.setTimers(stored.map((t) => reconcile(t, now)), false);
     this.loaded = true;
+    this.persist();
+    this.ctx.kv.watch(PREFIX, (keys) => void this.applyRemote(keys));
 
     this.ctx.native.onEvent((e) => {
       switch (e.type) {
@@ -161,9 +168,76 @@ export class TimerService {
     });
   }
 
+  /** Read every timer record; migrate the old single-array layout on the way. */
+  private async load(): Promise<Timer[]> {
+    const entries = await this.ctx.kv.list<Timer>(PREFIX);
+    let list = entries.map((e) => e.value);
+    const legacy = await this.ctx.kv.get<Timer[]>(LEGACY_KEY);
+    if (legacy) {
+      const known = new Set(list.map((t) => t.id));
+      for (const t of legacy) if (!known.has(t.id)) list.push(t);
+      await this.ctx.kv.delete(LEGACY_KEY);
+      // persist() below writes the migrated records because `persisted` is still empty
+    } else {
+      for (const t of list) this.persisted.set(t.id, t);
+    }
+    list = list.sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+    return list;
+  }
+
+  /** Timers changed by another device: reload them and mirror alarms on this device. */
+  private async applyRemote(keys: string[]): Promise<void> {
+    const now = Date.now();
+    let list = [...this.timers.get()];
+    for (const key of keys) {
+      const id = key.slice(PREFIX.length);
+      const incoming = await this.ctx.kv.get<Timer>(key);
+      const before = list.find((t) => t.id === id);
+      if (!incoming) {
+        if (before) {
+          list = list.filter((t) => t.id !== id);
+          this.persisted.delete(id);
+          this.ctx.native.cancelAlarm(alarmId(id));
+          this.ctx.native.cancelNotification(alarmId(id));
+        }
+        continue;
+      }
+      const after = reconcile(incoming, now);
+      this.persisted.set(id, incoming);
+      list = before ? list.map((t) => (t.id === id ? after : t)) : [...list, after];
+      if (after.state === 'running' && (before?.state !== 'running' || before.endsAt !== after.endsAt)) {
+        this.scheduleAlarm(after);
+      } else if (after.state !== 'running' && before?.state === 'running') {
+        this.ctx.native.cancelAlarm(alarmId(id));
+      }
+      if (after.state !== 'finished' && before?.state === 'finished') this.ctx.native.cancelNotification(alarmId(id));
+    }
+    list.sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+    this.setTimers(list, false);
+  }
+
+  /** Write changed timers and remove deleted ones (one record each). */
+  private persist(): void {
+    const list = this.timers.get();
+    const ids = new Set<string>();
+    for (const t of list) {
+      ids.add(t.id);
+      if (this.persisted.get(t.id) !== t) {
+        this.persisted.set(t.id, t);
+        void this.ctx.kv.set(PREFIX + t.id, t);
+      }
+    }
+    for (const id of [...this.persisted.keys()]) {
+      if (!ids.has(id)) {
+        this.persisted.delete(id);
+        void this.ctx.kv.delete(PREFIX + id);
+      }
+    }
+  }
+
   private setTimers(list: Timer[], persist = true): void {
     this.timers.set(list);
-    if (persist && this.loaded) void this.ctx.kv.set(STORAGE_KEY, list);
+    if (persist && this.loaded) this.persist();
     this.updateStatus();
     this.updateTicker();
     this.updateRinger();

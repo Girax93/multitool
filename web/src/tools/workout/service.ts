@@ -36,6 +36,30 @@ export class WorkoutService {
     const last = weeks[weeks.length - 1];
     this.currentWeekId.set(current && weeks.some((w) => w.id === current) ? current : (last?.id ?? null));
     this.updateStatus();
+    this.ctx.kv.watch('', (keys) => void this.applyRemote(keys));
+  }
+
+  /** Weeks or settings changed by another device: reload just those keys. */
+  private async applyRemote(keys: string[]): Promise<void> {
+    let list = this.weeks.get();
+    let touched = false;
+    for (const key of keys) {
+      if (key === SETTINGS_KEY) {
+        const s = await this.ctx.kv.get<Partial<WorkoutSettings>>(SETTINGS_KEY);
+        this.settings.set({ ...DEFAULT_SETTINGS, ...(s ?? {}) });
+      } else if (key.startsWith(WEEK_PREFIX)) {
+        const id = key.slice(WEEK_PREFIX.length);
+        const week = await this.ctx.kv.get<Week>(key);
+        list = week ? [...list.filter((w) => w.id !== id), week] : list.filter((w) => w.id !== id);
+        touched = true;
+      }
+    }
+    if (!touched) return;
+    const weeks = sortWeeks(list);
+    this.weeks.set(weeks);
+    const current = this.currentWeekId.get();
+    if (!current || !weeks.some((w) => w.id === current)) this.currentWeekId.set(weeks[weeks.length - 1]?.id ?? null);
+    this.updateStatus();
   }
 
   get(id: string): Week | undefined {

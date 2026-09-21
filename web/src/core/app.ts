@@ -1,7 +1,7 @@
 // App-level wiring: storage, native bridge, settings, tool lifecycle, and the
 // single stream of native events that tools subscribe to.
 
-import { createKV, scoped, type KV } from './db.js';
+import { createKV, scoped, type SyncStore } from './db.js';
 import {
   createNativeBridge,
   type AlarmRequest,
@@ -13,6 +13,7 @@ import {
 import { allTools, type ToolContext, type ToolDefinition } from './registry.js';
 import { navigate } from './router.js';
 import { SettingsStore, applyTheme } from './settings.js';
+import { SyncEngine } from './sync.js';
 import { Emitter, type Unsubscribe } from './store.js';
 import { showToast, type ToastOptions } from '../ui/toast.js';
 
@@ -61,9 +62,10 @@ class ToolNative implements NativeBridge {
 }
 
 export class App {
-  readonly kv: KV = createKV();
+  readonly kv: SyncStore = createKV();
   readonly native: NativeBridge = createNativeBridge();
   readonly settings = new SettingsStore(scoped(this.kv, 'core'));
+  readonly sync = new SyncEngine(this.kv);
   readonly nativeEvents = new Emitter<NativeEvent>();
   readonly info: NativeInfo = this.native.info();
 
@@ -88,6 +90,8 @@ export class App {
     for (const tool of this.enabledTools()) await this.initTool(tool);
     // Events queued while the app was closed are delivered once tools listen.
     this.drainNativeEvents();
+    // Tools are listening for remote changes now; start syncing in the background.
+    await this.sync.start();
   }
 
   private drainNativeEvents(): void {

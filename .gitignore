@@ -20,3 +20,7 @@ android/app/*.iml
 Thumbs.db
 __pycache__/
 *.pyc
+
+# sync worker build outputs
+worker/dist/
+worker/.wrangler/

@@ -6,6 +6,7 @@ on:
     paths:
       - 'web/**'
       - 'scripts/**'
+      - 'worker/**'
       - '.github/workflows/web.yml'
   workflow_dispatch:
 
@@ -82,6 +83,13 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build the local sync API stand-in used by the smoke test
+        run: |
+          npm install -g typescript@6.0.3
+          node scripts/build-worker.mjs --skip-tests
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

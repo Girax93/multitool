@@ -23,10 +23,14 @@ the whole chain is tapping "install" on the phone for a new Android shell.
 ```
 git clone https://github.com/Girax93/multitool     # public repo, clone works
 … edit …
-node scripts/build-web.mjs                          # tsc + unit tests (must pass)
-python3 web/tests/smoke.py                          # headless Chromium; look at web/tests/screenshots/*.png
+node scripts/build-web.mjs                          # tsc + unit tests, web and worker (must pass)
+python3 web/tests/smoke.py                          # headless Chromium incl. two-device sync; see web/tests/screenshots/*.png
 git add -A && git commit -m "…"                     # local commit for a clean diff
 ```
+
+`node scripts/build-worker.mjs` alone type-checks and tests the sync Worker
+(`worker/`); its unit tests and the smoke test run the Worker's real handler on
+Node over `node:sqlite`, so no Cloudflare access is needed to verify it.
 
 **Pushing:** `git push` is refused for this repo from the cloud workspace
 (GitHub credentials are only injected for repos registered as session sources).
@@ -50,6 +54,7 @@ Fix red runs before telling Ari it's done.
 | Trigger | Workflow | Result |
 | --- | --- | --- |
 | push to `main` touching `web/**` or `scripts/**` | `.github/workflows/web.yml` | build → unit tests → Playwright smoke → deploy to GitHub Pages → smoke against the live site |
+| push to `main` touching `worker/**` | `.github/workflows/worker.yml` | type-check + tests → D1 migrations → `wrangler deploy` to api.multitool.ariilden.com (needs the `CLOUDFLARE_API_TOKEN` secret; skips without it) |
 | push to `main` touching `android/**` | `.github/workflows/android.yml` | signed release APK → GitHub Release `shell-v1.0.<run>` |
 
 The live site is https://multitool.ariilden.com (GitHub Pages, custom domain,
@@ -76,11 +81,22 @@ Only change `android/` when a *native* capability is needed; every shell
 release means Ari has to tap install once.
 
 Secrets in the repo: `ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`,
-`ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`. Ari keeps an offline copy of the
-keystore. Never commit a keystore.
+`ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` (Android signing; Ari keeps an
+offline copy of the keystore — never commit one) and `CLOUDFLARE_API_TOKEN`
+(Worker + D1 deploys; Ari created it in the Cloudflare dashboard and added it
+himself — never ask him to paste it into chat).
+
+## Sync
+
+Everything under `tool/…` syncs (see `docs/SYNC.md`); keys with a `ui` path
+segment are per device. New tools get sync for free by using `ctx.kv`; they
+should subscribe with `ctx.kv.watch(prefix, fn)` to reload data that changed on
+another device, and keep per-device state under `ui/…`. Never change the
+record format on the server without a migration path: old devices keep
+pushing the old shape.
 
 ## Docs to keep current
 
-- `docs/ARCHITECTURE.md` when the structure changes.
+- `docs/ARCHITECTURE.md` when the structure changes; `docs/SYNC.md` for the sync protocol.
 - The claude.ai Project "MultiTool" holds the running decision log and open
   questions (e.g. the workout notation).

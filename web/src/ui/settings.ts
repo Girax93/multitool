@@ -7,6 +7,7 @@ import { fetchLatestShellRelease, isNewerShell, RELEASES_URL } from '../core/upd
 import { displayVersion } from '../core/version.js';
 import { icons } from './icons.js';
 import { showToast } from './toast.js';
+import { renderSyncSection } from './sync-settings.js';
 
 function section(title: string, ...children: HTMLElement[]): HTMLElement {
   return h('section', { class: 'card' }, h('h2', { class: 'card-title' }, title), ...children);
@@ -17,6 +18,7 @@ export function renderSettings(app: App): HTMLElement {
     'div',
     { class: 'stack', dataset: { testid: 'settings' } },
     renderToolsSection(app),
+    renderSyncSection(app),
     renderAppearance(app),
     renderData(app),
     renderAbout(app),
@@ -117,7 +119,7 @@ function renderData(app: App): HTMLElement {
   const importBtn = h('button', { class: 'btn', onClick: () => fileInput.click() }, 'Restore backup…');
   return section(
     'Data',
-    h('p', { class: 'muted' }, 'All data lives on this device. Export a backup before reinstalling or switching phones.'),
+    h('p', { class: 'muted' }, 'A backup file of everything on this device (sync settings excluded). Useful before reinstalling, or as an extra copy.'),
     h('div', { class: 'row' }, exportBtn, importBtn, fileInput),
   );
 }

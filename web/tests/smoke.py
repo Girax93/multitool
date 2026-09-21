@@ -14,12 +14,30 @@ import re
 import subprocess
 import sys
 import time
+import urllib.request
 
 from playwright.sync_api import expect, sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SHOTS = ROOT / "web" / "tests" / "screenshots"
 PORT = 8765
+API_PORT = 8787
+PHONE = {"width": 412, "height": 915}
+# The page is told to use the local sync API stand-in (worker/dist/node-server.js)
+# instead of api.multitool.ariilden.com, so the test never touches real accounts.
+INIT_SCRIPT = f"localStorage.setItem('multitool.syncApi', 'http://127.0.0.1:{API_PORT}');"
+
+
+def wait_for_api(timeout_s: float = 15) -> None:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{API_PORT}/v1/health", timeout=1) as r:
+                if b'"ok":true' in r.read():
+                    return
+        except Exception:  # noqa: BLE001
+            time.sleep(0.25)
+    raise RuntimeError("local sync API did not start (run `node scripts/build-worker.mjs` first)")
 
 
 def main() -> int:
@@ -29,6 +47,11 @@ def main() -> int:
 
     SHOTS.mkdir(parents=True, exist_ok=True)
     server = None
+    api = subprocess.Popen(
+        ["node", "--no-warnings=ExperimentalWarning", str(ROOT / "worker" / "dist" / "node-server.js"), str(API_PORT)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     base = args.base_url
     if not base:
         server = subprocess.Popen(
@@ -41,16 +64,18 @@ def main() -> int:
 
     failures: list[str] = []
     try:
+        wait_for_api()
         with sync_playwright() as p:
             browser = p.chromium.launch()
             ctx = browser.new_context(
-                viewport={"width": 412, "height": 915},
+                viewport=PHONE,
                 device_scale_factor=2,
                 is_mobile=True,
                 has_touch=True,
                 color_scheme="dark",
                 permissions=["notifications"],
             )
+            ctx.add_init_script(INIT_SCRIPT)
             page = ctx.new_page()
             errors: list[str] = []
             page.on("pageerror", lambda e: errors.append(str(e)))
@@ -188,11 +213,67 @@ def main() -> int:
             page.screenshot(path=str(SHOTS / "11-workout-settings.png"))
 
             # light theme render
-            light = browser.new_context(viewport={"width": 412, "height": 915}, color_scheme="light")
+            light = browser.new_context(viewport=PHONE, color_scheme="light")
             lp = light.new_page()
             lp.goto(base + "#/t/timer", wait_until="networkidle")
             expect(lp.locator("[data-testid='timer-list']")).to_be_visible()
             lp.screenshot(path=str(SHOTS / "07-light.png"))
+            light.close()
+
+            # ---- sync: device A turns it on, device B links with the code, changes flow both ways
+            page.goto(base + "#/settings", wait_until="networkidle")
+            expect(page.locator("[data-testid='sync-status']")).to_contain_text("Sync is off")
+            expect(page.locator("[data-testid='sync-indicator']")).to_be_hidden()
+            page.click("[data-testid='sync-enable']")
+            code_el = page.locator("[data-testid='link-code']")
+            expect(code_el).to_have_text(re.compile(r"^[A-Z2-9]{4}-[A-Z2-9]{4}$"), timeout=20_000)
+            code = code_el.inner_text()
+            page.screenshot(path=str(SHOTS / "12-sync-link-code.png"))
+            page.locator(".sheet-panel .iconbtn[aria-label='Close']").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            expect(page.locator("[data-testid='sync-indicator']")).to_be_visible()
+            expect(page.locator("[data-testid='sync-status']")).to_contain_text("Synced", timeout=20_000)
+            page.screenshot(path=str(SHOTS / "13-sync-settings.png"))
+
+            device_b = browser.new_context(viewport=PHONE, device_scale_factor=2, is_mobile=True, has_touch=True, color_scheme="dark")
+            device_b.add_init_script(INIT_SCRIPT)
+            pb = device_b.new_page()
+            pb.on("pageerror", lambda e: errors.append("B: " + str(e)))
+            pb.on("console", lambda m: errors.append("B: " + m.text) if m.type == "error" else None)
+            pb.goto(base + "#/settings", wait_until="networkidle")
+            expect(pb.locator("[data-testid='sync-status']")).to_contain_text("Sync is off")
+            pb.click("[data-testid='sync-join']")
+            pb.fill("[data-testid='join-code']", code.lower())
+            pb.screenshot(path=str(SHOTS / "14-sync-join.png"))
+            pb.click("[data-testid='join-submit']")
+            expect(pb.locator(".toast")).to_contain_text("Linked", timeout=20_000)
+            expect(pb.locator("[data-testid='sync-status']")).to_contain_text("Synced", timeout=20_000)
+            # the code is single use
+            page.locator("[data-testid='sync-link']").click()
+            expect(page.locator("[data-testid='link-code']")).not_to_have_text(code, timeout=20_000)
+            page.locator(".sheet-panel .iconbtn[aria-label='Close']").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+
+            # B received A's workout weeks and saved timer
+            pb.goto(base + "#/t/workout", wait_until="networkidle")
+            expect(pb.locator("[data-testid='workout-grid']")).to_be_visible(timeout=20_000)
+            assert pb.locator("[data-testid='exercise-header']").count() == 2, "B should have A's exercises"
+            pb.goto(base + "#/t/timer", wait_until="networkidle")
+            expect(pb.locator(".timer-card[data-state='idle'] .timer-name")).to_have_text("Pasta", timeout=20_000)
+            pb.screenshot(path=str(SHOTS / "15-sync-device-b.png"))
+
+            # B adds a saved timer; A picks it up after "Sync now" without a reload
+            pb.fill("[data-testid='timer-name']", "From B")
+            pb.fill("[data-testid='timer-minutes']", "3")
+            pb.check("[data-testid='timer-saved']")
+            pb.click("[data-testid='timer-add']")
+            expect(pb.locator(".timer-card")).to_have_count(2)
+            pb.wait_for_timeout(2500)  # the local write is pushed after a short debounce
+            page.goto(base + "#/settings", wait_until="networkidle")
+            page.click("[data-testid='sync-now']")
+            page.goto(base + "#/t/timer", wait_until="networkidle")
+            expect(page.locator(".timer-name", has_text="From B")).to_have_count(1, timeout=20_000)
+            device_b.close()
 
             if errors:
                 failures.append("console/page errors: " + " | ".join(errors))
@@ -202,6 +283,7 @@ def main() -> int:
     finally:
         if server:
             server.terminate()
+        api.terminate()
 
     if failures:
         print("SMOKE FAILED")
