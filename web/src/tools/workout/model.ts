@@ -83,6 +83,8 @@ export interface Week {
   days: DayEntry[];
   /** Keyed by exercise id. Numbers are stable; gaps are fine. */
   footnotes: Record<string, Footnote[]>;
+  /** Free text about the whole week (plans, discoveries). */
+  notes?: string;
 }
 
 export const DEFAULT_LEGEND: LegendEntry[] = [
@@ -197,7 +199,7 @@ export function newWeek(input: NewWeekInput): Week {
   const days = settings.defaultDays.map((wd, i) => newDay(input.dayIds[i] ?? `${input.id}-${wd}`, wd, startDate, exercises));
   return {
     id: input.id,
-    label: input.label ?? defaultWeekLabel(startDate),
+    label: input.label ?? nextWeekLabel(previous?.label, startDate),
     startDate,
     createdAt: input.now,
     exercises,
@@ -209,6 +211,13 @@ export function newWeek(input: NewWeekInput): Week {
 export function defaultWeekLabel(startDate: string | undefined): string {
   if (!startDate) return 'Week';
   return `Week ${isoWeek(startDate).week}`;
+}
+
+/** "Week 12" → "Week 13" (Ari counts weeks since he started); otherwise the ISO week. */
+export function nextWeekLabel(previousLabel: string | undefined, startDate: string | undefined): string {
+  const m = previousLabel ? /^(.*?)(\d+)\s*$/.exec(previousLabel.trim()) : null;
+  if (m && m[2]) return `${m[1] ?? ''}${parseInt(m[2], 10) + 1}`;
+  return defaultWeekLabel(startDate);
 }
 
 /** Weeks sorted oldest → newest. */
@@ -386,14 +395,24 @@ export function formatSet(cell: SetCell): string {
 }
 
 /**
- * Parse the old spreadsheet notation: trailing dots are footnote references
- * ("16.." → value "16", refs [2]). Anything else is kept as typed.
+ * Parse the old spreadsheet notation: every run of dots is a footnote
+ * reference whose number is the run length ("16.." → "16" + note 2,
+ * "12.***" → "12***" + note 1, "12.. …" → "12" + notes 2 and 3). An ellipsis
+ * character counts as three dots; a dot between two digits is a decimal point
+ * and is left alone. A ⭐ sets the star flag. Everything else is kept as typed.
  */
 export function parseLegacyCell(text: string): SetCell {
-  const m = /^(.*?)(\.+)\s*$/.exec(text.trim());
-  if (!m) return clean({ v: text.trim() });
-  const dots = m[2]?.length ?? 0;
-  return clean({ v: (m[1] ?? '').trim(), fn: dots > 0 ? [dots] : [] });
+  let s = text.replace(/…/g, '...').trim();
+  const star = s.includes('⭐');
+  if (star) s = s.replace(/⭐/g, '');
+  const refs: number[] = [];
+  s = s.replace(/(?<!\d)\.+(?!\d)|(?<=\d)\.+(?!\d)|(?<!\d)\.+(?=\d)/g, (run) => {
+    refs.push(run.length);
+    return '';
+  });
+  const v = s.replace(/\s+/g, ' ').trim();
+  const fn = [...new Set(refs)].sort((a, b) => a - b);
+  return clean({ v, fn, star });
 }
 
 export function weekSummary(week: Week): string {

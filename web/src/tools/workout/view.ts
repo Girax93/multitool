@@ -92,7 +92,7 @@ function renderLog(service: WorkoutService, ctx: ToolContext): HTMLElement {
   );
 
   const grid = renderGrid(service, ctx, week, settings);
-  const footnotes = renderFootnotes(service, week);
+  const footnotes = renderFootnotes(service, ctx, week);
   const legend = renderLegend(settings);
 
   return h('div', { class: 'wk', dataset: { testid: 'workout' } }, weekBar, h('div', { class: 'wk-scroll' }, grid, footnotes, legend));
@@ -201,8 +201,18 @@ function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, setti
   return h('div', { class: 'wk-grid' }, table);
 }
 
-function renderFootnotes(service: WorkoutService, week: Week): HTMLElement | null {
+function renderFootnotes(service: WorkoutService, ctx: ToolContext, week: Week): HTMLElement | null {
   const blocks: HTMLElement[] = [];
+  if (week.notes?.trim()) {
+    blocks.push(
+      h(
+        'div',
+        { class: 'wk-fn-ex', dataset: { testid: 'week-notes' } },
+        h('span', { class: 'wk-fn-name' }, 'Week'),
+        h('button', { class: 'wk-fn', onClick: () => openWeekEditor(service, ctx, week.id) }, week.notes),
+      ),
+    );
+  }
   for (const ex of week.exercises) {
     const notes = footnotesFor(week, ex.id);
     if (!notes.length) continue;

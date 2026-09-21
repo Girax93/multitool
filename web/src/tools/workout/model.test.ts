@@ -59,7 +59,11 @@ test('newWeek uses default days with dates and copies exercises from the previou
   );
   const next = newWeek({ id: 'w2', dayIds: ['e1', 'e2', 'e3'], now: NOW, settings: DEFAULT_SETTINGS, previous: w });
   assert.equal(next.startDate, '2026-06-01');
-  assert.equal(next.label, 'Week 23');
+  assert.equal(next.label, 'Week 23'); // previous label "Week 22" + 1
+  const custom = newWeek({ id: 'w3', dayIds: [], now: NOW, settings: DEFAULT_SETTINGS, previous: { ...w, label: 'Block 79' } });
+  assert.equal(custom.label, 'Block 80');
+  const named = newWeek({ id: 'w4', dayIds: [], now: NOW, settings: DEFAULT_SETTINGS, previous: { ...w, label: 'Deload' } });
+  assert.equal(named.label, 'Week 23'); // falls back to the ISO week
   assert.deepEqual(
     next.exercises.map((e) => e.id),
     ['squat', 'rows'],
@@ -136,7 +140,17 @@ test('legacy dot notation', () => {
   assert.deepEqual(parseLegacyCell('6+4.'), { v: '6+4', fn: [1] });
   assert.deepEqual(parseLegacyCell('12'), { v: '12' });
   assert.deepEqual(parseLegacyCell(' 8 '), { v: '8' });
-  assert.deepEqual(parseLegacyCell('12.!'), { v: '12.!' }); // only trailing dots are refs
+  assert.deepEqual(parseLegacyCell('12.!'), { v: '12!', fn: [1] });
+  assert.deepEqual(parseLegacyCell('12!!.'), { v: '12!!', fn: [1] });
+  assert.deepEqual(parseLegacyCell('12.***'), { v: '12***', fn: [1] });
+  assert.deepEqual(parseLegacyCell('8..***'), { v: '8***', fn: [2] });
+  assert.deepEqual(parseLegacyCell('12.. …'), { v: '12', fn: [2, 3] });
+  assert.deepEqual(parseLegacyCell('12 …'), { v: '12', fn: [3] });
+  assert.deepEqual(parseLegacyCell('***.'), { v: '***', fn: [1] });
+  assert.deepEqual(parseLegacyCell('8(10)!!.'), { v: '8(10)!!', fn: [1] });
+  assert.deepEqual(parseLegacyCell('10.5'), { v: '10.5' }); // decimal, not a ref
+  assert.deepEqual(parseLegacyCell('13⭐'), { v: '13', star: true });
+  assert.deepEqual(parseLegacyCell('N/A'), { v: 'N/A' });
 });
 
 test('days, sorting and summary', () => {

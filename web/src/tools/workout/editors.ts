@@ -525,11 +525,14 @@ export function openWeekEditor(service: WorkoutService, ctx: ToolContext, weekId
       });
       return h('label', { class: 'check check-inline' }, box, h('span', null, wd));
     });
+    const notes = h('textarea', { class: 'input textarea', rows: 2, placeholder: 'Anything about this week (plan, discoveries)', value: w.notes ?? '', dataset: { testid: 'week-notes-input' } });
+    notes.addEventListener('input', () => service.update(weekId, (x) => clean({ ...x, notes: notes.value })));
     replace(
       sheet.body,
       field('Label', label),
       field('Week starts (Monday)', start),
       h('div', { class: 'field-col' }, h('span', { class: 'field-label' }, 'Training days'), h('div', { class: 'chips' }, ...dayBoxes)),
+      field('Week notes', notes),
       h(
         'div',
         { class: 'row row-between sheet-actions' },
