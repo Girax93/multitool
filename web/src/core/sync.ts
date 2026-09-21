@@ -23,7 +23,7 @@ import {
 import { isSyncedKey, type SyncStore } from './db.js';
 import { signal, type Signal } from './store.js';
 
-export const DEFAULT_API_URL = 'https://api.multitool.ariilden.com';
+export const DEFAULT_API_URL = 'https://multitool-api.ariilden.com';
 export const API_URL_OVERRIDE_KEY = 'multitool.syncApi';
 const ACCOUNT_KEY = 'sync/account';
 const CURSOR_KEY = 'sync/cursor';

@@ -89,13 +89,30 @@ jobs:
         if: steps.token.outputs.present == 'true'
         run: npx wrangler deploy
 
+      - name: Remove custom domains that are no longer in wrangler.toml
+        if: steps.token.outputs.present == 'true'
+        run: |
+          set -e
+          keep="$(grep -oE 'pattern = "[^"]+"' wrangler.toml | sed -E 's/pattern = "([^"]+)"/\1/')"
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains"
+          curl -fsS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$api?service=multitool-sync" \
+            | node -e '
+              let s = ""; process.stdin.on("data", (c) => (s += c)).on("end", () => {
+                const keep = process.argv[1].split(/\s+/).filter(Boolean);
+                for (const d of JSON.parse(s).result ?? []) if (!keep.includes(d.hostname)) console.log(`${d.id} ${d.hostname}`);
+              });' "$keep" \
+            | while read -r id host; do
+                echo "removing stale custom domain $host"
+                curl -fsS -X DELETE -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$api/$id" > /dev/null
+              done
+
       - name: Verify
         if: steps.token.outputs.present == 'true'
         run: |
           for i in $(seq 1 20); do
-            if curl -fsS https://api.multitool.ariilden.com/v1/health | grep -q '"ok":true'; then
+            if curl -fsS https://multitool-api.ariilden.com/v1/health | grep -q '"ok":true'; then
               echo "api is live"; exit 0
             fi
             echo "attempt $i: not yet"; sleep 15
           done
-          echo "::warning::api.multitool.ariilden.com did not answer within 5 minutes (custom domain still provisioning?)"
+          echo "::warning::multitool-api.ariilden.com did not answer within 5 minutes (custom domain still provisioning?)"

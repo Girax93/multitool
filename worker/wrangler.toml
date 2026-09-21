@@ -7,7 +7,10 @@ compatibility_date = "2026-08-01"
 account_id = "dd4986130a0053a20b83e627b1b91a86"
 workers_dev = false
 
-routes = [{ pattern = "api.multitool.ariilden.com", custom_domain = true }]
+# One-level subdomain on purpose: the zone's Universal SSL certificate covers
+# *.ariilden.com, while api.multitool.ariilden.com would need a paid
+# Advanced Certificate (the first deploy proved that: HTTP worked, HTTPS never got a cert).
+routes = [{ pattern = "multitool-api.ariilden.com", custom_domain = true }]
 
 [observability]
 enabled = true

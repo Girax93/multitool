@@ -52,7 +52,12 @@ Every applied write gets a per-account sequence number `seq`. Clients pull with
 `since = last seen seq`; the server returns records with `seq > since` in
 order (≤ 300 per response, `hasMore` for the rest).
 
-## API (Worker, `https://api.multitool.ariilden.com`)
+## API (Worker, `https://multitool-api.ariilden.com`)
+
+The hostname is a one-level subdomain on purpose: the zone's free Universal SSL
+certificate covers `*.ariilden.com` only. `api.multitool.ariilden.com` deployed
+fine but never got an HTTPS certificate (that needs Cloudflare's paid Advanced
+Certificate Manager).
 
 | Method | Path | Auth | Body → Response |
 | --- | --- | --- | --- |

@@ -54,7 +54,7 @@ Fix red runs before telling Ari it's done.
 | Trigger | Workflow | Result |
 | --- | --- | --- |
 | push to `main` touching `web/**` or `scripts/**` | `.github/workflows/web.yml` | build → unit tests → Playwright smoke → deploy to GitHub Pages → smoke against the live site |
-| push to `main` touching `worker/**` | `.github/workflows/worker.yml` | type-check + tests → D1 migrations → `wrangler deploy` to api.multitool.ariilden.com (needs the `CLOUDFLARE_API_TOKEN` secret; skips without it) |
+| push to `main` touching `worker/**` | `.github/workflows/worker.yml` | type-check + tests → D1 migrations → `wrangler deploy` to multitool-api.ariilden.com (needs the `CLOUDFLARE_API_TOKEN` secret; skips without it) |
 | push to `main` touching `android/**` | `.github/workflows/android.yml` | signed release APK → GitHub Release `shell-v1.0.<run>` |
 
 The live site is https://multitool.ariilden.com (GitHub Pages, custom domain,

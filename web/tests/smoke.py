@@ -24,7 +24,7 @@ PORT = 8765
 API_PORT = 8787
 PHONE = {"width": 412, "height": 915}
 # The page is told to use the local sync API stand-in (worker/dist/node-server.js)
-# instead of api.multitool.ariilden.com, so the test never touches real accounts.
+# instead of multitool-api.ariilden.com, so the test never touches real accounts.
 INIT_SCRIPT = f"localStorage.setItem('multitool.syncApi', 'http://127.0.0.1:{API_PORT}');"
 
 

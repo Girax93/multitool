@@ -104,7 +104,7 @@ Package id `com.ariilden.multitool`, minSdk 26, targetSdk 35. Version name
 ## Sync API (`worker/`)
 
 Cloudflare Worker (TypeScript, no dependencies) with a D1 database, at
-`https://api.multitool.ariilden.com`. `handler.ts` holds all logic and also runs
+`https://multitool-api.ariilden.com`. `handler.ts` holds all logic and also runs
 on Node over `node:sqlite` (`node-server.ts`), which is what the unit tests and
 the Playwright smoke test use — two headless "devices" pair and exchange data
 against a real instance of the same code.
