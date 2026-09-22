@@ -157,10 +157,9 @@ export class WorkoutService {
     }
     this.weeks.set(sortWeeks([...byId.values()]));
     if (settings) await this.updateSettings(settings);
-    if (!this.current()) {
-      const last = this.weeks.get()[this.weeks.get().length - 1];
-      if (last) this.select(last.id);
-    }
+    // Land on the newest week after an import (the imported history usually ends there).
+    const last = this.weeks.get()[this.weeks.get().length - 1];
+    if (last) this.select(last.id);
     this.updateStatus();
     return { added, replaced };
   }
