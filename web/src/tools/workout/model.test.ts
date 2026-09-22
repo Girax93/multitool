@@ -226,6 +226,12 @@ test('days, sorting and summary', () => {
   assert.equal(weekSummary(w), '0/4 days · 2 exercises');
   w = updateSet(w, 'd1', 'squat', 0, { v: '8' });
   assert.equal(weekSummary(w), '1/4 days · 2 exercises');
+  // another workout instead of the tracked exercises still counts as trained
+  w = updateDay(w, 'd2', { alt: '40 min full body (YouTube)' });
+  assert.equal(weekSummary(w), '2/4 days · 2 exercises');
+  w = updateDay(w, 'd2', { alt: '' });
+  assert.equal(weekSummary(w), '1/4 days · 2 exercises');
+  assert.equal(w.days.find((d) => d.id === 'd2')?.alt, undefined); // clean() drops the empty string
 
   const later = newWeek({ id: 'w9', dayIds: [], now: NOW + 1, settings: DEFAULT_SETTINGS, startDate: '2026-06-01' });
   const undated = { ...baseWeek(), id: 'u', startDate: undefined, createdAt: 5 };

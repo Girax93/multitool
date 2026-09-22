@@ -357,6 +357,25 @@ export function openDayEditor(service: WorkoutService, weekId: string, dayId: st
     );
     const notes = h('textarea', { class: 'input textarea', rows: 3, placeholder: 'Notes for this day', value: day.notes ?? '' });
     notes.addEventListener('input', () => service.update(weekId, (x) => updateDay(x, dayId, { notes: notes.value })));
+    // Worked out, but not with the tracked exercises: name it and the row shows that instead of the sets.
+    const alt = h('input', {
+      type: 'text',
+      class: 'input',
+      placeholder: 'e.g. 40 min full body (YouTube), 5 km run',
+      value: day.alt ?? '',
+      autocomplete: 'off',
+      dataset: { testid: 'day-alt' },
+    });
+    const altHint = h('p', { class: 'muted field-hint' });
+    const altHintText = (): string =>
+      alt.value.trim() ? 'Shown across the exercise columns; clear it to log sets again (they are kept).' : 'Leave empty when you did the exercises above.';
+    altHint.textContent = altHintText();
+    // No sheet re-render here: `change` also fires on blur, and replacing the
+    // sheet while the input loses focus would re-enter the DOM update.
+    alt.addEventListener('change', () => {
+      service.update(weekId, (x) => updateDay(x, dayId, { alt: alt.value.trim() }));
+      altHint.textContent = altHintText();
+    });
 
     replace(
       sheet.body,
@@ -366,6 +385,13 @@ export function openDayEditor(service: WorkoutService, weekId: string, dayId: st
       field('Marks', marks),
       markChips,
       field('Notes', notes),
+      h(
+        'div',
+        { class: 'field-col' },
+        h('span', { class: 'field-label' }, 'Did something else instead?'),
+        alt,
+        altHint,
+      ),
       h('div', { class: 'editor-row' }, h('span', { class: 'editor-label' }, 'Colour (whole day)'), swatches(service, day, (style) => {
         service.update(weekId, (x) => updateDay(x, dayId, style));
         render();

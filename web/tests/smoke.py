@@ -210,6 +210,25 @@ def main() -> int:
             expect(first_row.locator("[data-testid='day-header']")).to_contain_text("Tue")
             expect(first_row.locator("[data-testid='day-header']")).to_contain_text("97.1 kg")  # same row, data kept
 
+            # worked out, but not with these exercises: one cell across the columns; clearing it brings the sets back
+            wed_row = grid.locator("tbody tr").nth(1)
+            wed_row.locator("[data-testid='day-header']").click()
+            page.fill("[data-testid='day-alt']", "5 km run")
+            page.locator("[data-testid='day-alt']").dispatch_event("change")
+            page.locator(".sheet-panel button", has_text="Done").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            expect(page.locator("[data-testid='alt-cell']")).to_have_count(1)
+            expect(page.locator("[data-testid='alt-cell']")).to_contain_text("5 km run")
+            assert grid.locator("tbody tr").nth(1).locator("td.wk-cell").count() == 1
+            page.locator("[data-testid='alt-cell'] button").click()
+            expect(page.locator("[data-testid='day-alt']")).to_have_value("5 km run")
+            page.fill("[data-testid='day-alt']", "")
+            page.locator("[data-testid='day-alt']").dispatch_event("change")
+            page.locator(".sheet-panel button", has_text="Done").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            expect(page.locator("[data-testid='alt-cell']")).to_have_count(0)
+            assert grid.locator("tbody tr").nth(1).locator("td.wk-cell").count() == 6
+
             # a plain note added from the notes row: no number, numbered ones keep theirs
             expect(page.locator("[data-testid='legend']")).to_be_visible()
             expect(page.locator("[data-testid='legend']")).not_to_have_attribute("open", re.compile(".*"))  # closed by default

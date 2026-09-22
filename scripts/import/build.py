@@ -61,7 +61,10 @@ def build(weeks: list[dict]) -> dict:
         assert len(set(ids)) == len(ids), f'week {n}: duplicate exercise ids {ids}'
 
         days = []
-        for di, (weekday, bw, notes, marks, colour, notes_colour) in enumerate(w['days']):
+        for di, spec in enumerate(w['days']):
+            # (weekday, bodyweight, notes, marks, day colour, notes colour[, other workout])
+            weekday, bw, notes, marks, colour, notes_colour = spec[:6]
+            alt = spec[6] if len(spec) > 6 else None
             assert weekday in WEEKDAYS, weekday
             cells = {}
             for ei, ex in enumerate(exercises):
@@ -89,6 +92,8 @@ def build(weeks: list[dict]) -> dict:
                 day['c'] = colour
             if notes_colour:
                 day['notesStyle'] = {'c': notes_colour}
+            if alt:
+                day['alt'] = alt  # worked out, but not with the tracked exercises
             days.append(day)
 
         footnotes = {}
@@ -96,6 +101,11 @@ def build(weeks: list[dict]) -> dict:
             lst = [{'n': k + 1, 'text': t} for k, t in enumerate(texts) if t is not None]
             if lst:
                 footnotes[exercises[ei]['id']] = lst
+        # Plain notes (no dot in the sheet, not referenced from a set) get negative keys.
+        for ei, texts in w.get('pn', {}).items():
+            lst = footnotes.setdefault(exercises[ei]['id'], [])
+            for k, t in enumerate(texts):
+                lst.append({'n': -(k + 1), 'text': t})
 
         # A referenced footnote should exist. The sheet occasionally has a
         # reference without a matching note (e.g. Week 6 Bicep Curls `12.`

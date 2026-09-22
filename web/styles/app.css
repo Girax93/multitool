@@ -1075,6 +1075,14 @@ body.sheet-open {
 .wk-cell-first {
   border-left: 2px solid var(--border);
 }
+/* "worked out, but not tracked": one cell across the exercise columns */
+.wk-alt {
+  text-align: left;
+}
+.field-hint {
+  font-size: 12px;
+  margin: 4px 0 0;
+}
 .wk-cbtn {
   width: 100%;
   min-width: 52px;
@@ -1097,6 +1105,22 @@ body.sheet-open {
   font-size: 10px;
   color: var(--accent-2);
   margin-left: 1px;
+}
+.wk-cbtn-alt {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-2);
+  text-align: left;
+  white-space: normal;
+  padding: 6px 10px;
+}
+.wk-cbtn-alt .icon {
+  color: var(--muted);
 }
 .wk-notes {
   position: relative;

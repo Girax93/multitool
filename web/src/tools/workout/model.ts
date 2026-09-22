@@ -65,6 +65,12 @@ export interface DayEntry extends CellStyle {
   marks?: string;
   notes?: string;
   notesStyle?: CellStyle;
+  /**
+   * Worked out, but not with the tracked exercises (a YouTube session, a
+   * run…): the name of what was done. The grid shows it as one cell across
+   * the exercise columns; the day's sets are kept but hidden.
+   */
+  alt?: string;
   /** Keyed by exercise id. */
   cells: Record<string, ExerciseDay>;
 }
@@ -467,8 +473,13 @@ export function parseLegacyCell(text: string): SetCell {
   return clean({ v, fn, star });
 }
 
+/** A day counts as trained when a set was logged or another workout was done instead. */
+export function dayTrained(d: DayEntry): boolean {
+  return !!d.alt?.trim() || Object.values(d.cells).some((ed) => ed.sets.some((s) => s.v.trim() !== ''));
+}
+
 export function weekSummary(week: Week): string {
-  const filled = week.days.filter((d) => Object.values(d.cells).some((ed) => ed.sets.some((s) => s.v.trim() !== ''))).length;
+  const filled = week.days.filter(dayTrained).length;
   return `${filled}/${week.days.length} days · ${week.exercises.length} exercises`;
 }
 

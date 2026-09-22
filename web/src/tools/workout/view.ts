@@ -296,17 +296,34 @@ function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, setti
     applyStyle(th, settings, day);
     tr.appendChild(th);
 
-    for (const ex of week.exercises) {
-      const ed = day.cells[ex.id];
-      for (let i = 0; i < ex.sets; i++) {
-        const cell = ed?.sets[i] ?? { v: '' };
-        const td = h(
-          'td',
-          { class: `wk-cell${i === 0 ? ' wk-cell-first' : ''}${i === ex.sets - 1 ? ' wk-cell-last' : ''}`, dataset: { day: day.id, ex: ex.id, set: String(i) } },
-          h('button', { class: 'wk-cbtn', onClick: () => openSetEditor(service, ctx, week.id, { dayId: day.id, exId: ex.id, index: i }) }, ...setContent(cell)),
-        );
-        applyStyle(td, settings, cell, ed, day);
-        tr.appendChild(td);
+    if (day.alt?.trim()) {
+      // Worked out, but not with these exercises: one cell across all set columns.
+      const span = week.exercises.reduce((n, ex) => n + ex.sets, 0) || 1;
+      const td = h(
+        'td',
+        { colSpan: span, class: 'wk-cell wk-cell-first wk-alt', dataset: { day: day.id, testid: 'alt-cell' } },
+        h(
+          'button',
+          { class: 'wk-cbtn wk-cbtn-alt', title: 'Another workout — tap to edit the day', onClick: () => openDayEditor(service, week.id, day.id) },
+          svg(icons.dumbbell, 'icon icon-sm'),
+          h('span', null, day.alt.trim()),
+        ),
+      );
+      applyStyle(td, settings, day);
+      tr.appendChild(td);
+    } else {
+      for (const ex of week.exercises) {
+        const ed = day.cells[ex.id];
+        for (let i = 0; i < ex.sets; i++) {
+          const cell = ed?.sets[i] ?? { v: '' };
+          const td = h(
+            'td',
+            { class: `wk-cell${i === 0 ? ' wk-cell-first' : ''}${i === ex.sets - 1 ? ' wk-cell-last' : ''}`, dataset: { day: day.id, ex: ex.id, set: String(i) } },
+            h('button', { class: 'wk-cbtn', onClick: () => openSetEditor(service, ctx, week.id, { dayId: day.id, exId: ex.id, index: i }) }, ...setContent(cell)),
+          );
+          applyStyle(td, settings, cell, ed, day);
+          tr.appendChild(td);
+        }
       }
     }
     const notesTd = h(
