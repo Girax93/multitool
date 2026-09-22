@@ -7,6 +7,14 @@ import {
   addFootnote,
   displayFootnotes,
   emptyDuplicateWeeks,
+  emptySetIndexes,
+  exerciseDone,
+  formatSeconds,
+  mergeSettings,
+  nextTimedExercise,
+  parseSeconds,
+  sessionDay,
+  weekForDate,
   formatSet,
   getSet,
   hasLink,
@@ -324,11 +332,53 @@ test('empty duplicate weeks are found; anything logged keeps a week', () => {
   assert.deepEqual(emptyDuplicateWeeks([real, typed], [real]), []);
 });
 
-test('the next week label counts on from the highest number, past gap weeks', () => {
-  const w80 = { ...baseWeek(), id: 'a', label: 'Week 80' };
-  const gap = { ...baseWeek(), id: 'b', label: 'No workout' };
-  const w79 = { ...baseWeek(), id: 'c', label: 'Week 79' };
+test('the next week label counts calendar weeks on from the highest number', () => {
+  const w80 = { ...baseWeek(), id: 'a', label: 'Week 80', startDate: '2026-08-10' };
+  const gap = { ...baseWeek(), id: 'b', label: 'No workout', startDate: '2026-08-17' };
+  const w79 = { ...baseWeek(), id: 'c', label: 'Week 79', startDate: '2026-08-03' };
   assert.equal(nextWeekLabelFrom([w79, w80, gap]), 'Week 81');
+  assert.equal(nextWeekLabelFrom([w79, w80, gap], '2026-08-17'), 'Week 81');
+  assert.equal(nextWeekLabelFrom([w79, w80, gap], '2026-09-21'), 'Week 86'); // skipped weeks still count
+  assert.equal(nextWeekLabelFrom([w79, w80, gap], '2026-08-10'), 'Week 81'); // never the same or lower
   assert.equal(nextWeekLabelFrom([gap]), undefined);
   assert.equal(nextWeekLabelFrom([]), undefined);
 });
+
+test('workout mode helpers: today\'s week and day, timed exercises, seconds', () => {
+  let w = baseWeek(); // starts 2026-05-25, Mon/Wed/Fri
+  w = updateExercise(w, 'rows', { timedSec: 90 });
+  const other = { ...baseWeek(), id: 'w2', startDate: '2026-06-01' };
+  assert.equal(weekForDate([w, other], '2026-05-27')?.id, 'w1');
+  assert.equal(weekForDate([w, other], '2026-06-01')?.id, 'w2');
+  assert.equal(weekForDate([w, other], '2026-06-08'), undefined);
+  assert.equal(sessionDay(w, '2026-05-27')?.weekday, 'Wed');
+  assert.equal(sessionDay(w, '2026-05-26')?.weekday, 'Mon'); // Tuesday: first day with nothing logged
+  w = updateSet(w, 'd1', 'squat', 0, { v: '6' });
+  assert.equal(sessionDay(w, '2026-05-26')?.weekday, 'Wed');
+  const mon = w.days[0]!;
+  const squat = w.exercises[0]!;
+  assert.deepEqual(emptySetIndexes(mon, squat), [1, 2]);
+  assert.deepEqual(emptySetIndexes(mon, w.exercises[1]!), [0, 1, 2]);
+  assert.equal(exerciseDone(mon, squat), false);
+  assert.equal(nextTimedExercise(w, mon, 'squat')?.id, 'rows'); // rows is timed and untouched
+  w = updateSet(w, 'd1', 'rows', 0, { v: 'Ok' });
+  assert.equal(nextTimedExercise(w, w.days[0]!, 'squat'), undefined); // already started
+  assert.equal(nextTimedExercise(w, mon, 'rows'), undefined); // nothing after rows
+  assert.equal(formatSeconds(90), '1:30');
+  assert.equal(formatSeconds(5), '0:05');
+  assert.equal(parseSeconds('1:30'), 90);
+  assert.equal(parseSeconds('90'), 90);
+  assert.equal(parseSeconds('2m'), 120);
+  assert.equal(parseSeconds('1m 5s'), 65);
+  assert.equal(parseSeconds('x'), null);
+  assert.equal(mergeSettings({ trackBodyweight: false }).session.restSec, 90);
+  assert.equal(mergeSettings({ session: { restSec: 60 } as never }).session.stepSec, 30);
+  // a new week copies the timed flag
+  const next = newWeek({ id: 'n', dayIds: [], now: NOW, settings: DEFAULT_SETTINGS, previous: w });
+  assert.equal(next.exercises[1]?.timedSec, 90);
+  assert.equal(next.exercises[0]?.timedSec, undefined);
+  // imports may retire ids
+  const parsed = parseWorkoutExport({ format: 'multitool-workout', version: 1, weeks: [], remove: ['import-gap-1', 7] });
+  assert.deepEqual(parsed.remove, ['import-gap-1']);
+});
+

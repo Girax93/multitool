@@ -48,7 +48,7 @@ def parse_cell(text: str) -> dict:
     return cell
 
 
-def build(weeks: list[dict]) -> dict:
+def build(weeks: list[dict], remove: list[str] | None = None) -> dict:
     out = []
     for w in weeks:
         n = w['n']
@@ -56,8 +56,11 @@ def build(weeks: list[dict]) -> dict:
         assert start.weekday() == 0, f'week {n}: {start} is not a Monday'
         wid = w.get('wid') or f'import-week{n:02d}'
         exercises = []
-        for i, (name, weight) in enumerate(w['ex']):
+        for i, spec in enumerate(w['ex']):
+            name, weight = spec[0], spec[1]
             ex = {'id': slug(name), 'name': name, 'weight': weight, 'sets': 3}
+            if len(spec) > 2 and spec[2]:
+                ex['timedSec'] = spec[2]  # timed holds (handstands): work seconds per set
             colour = w['exc'].get(i)
             if colour:
                 ex['c'] = colour
@@ -137,12 +140,15 @@ def build(weeks: list[dict]) -> dict:
         if w.get('x'):
             week['notes'] = w['x']
         out.append(week)
-    return {
+    result = {
         'format': 'multitool-workout',
         'version': 1,
         'exportedAt': dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
         'weeks': out,
     }
+    if remove:
+        result['remove'] = list(remove)  # ids of earlier imports this file replaces
+    return result
 
 
 if __name__ == '__main__':
@@ -150,7 +156,7 @@ if __name__ == '__main__':
     spec = importlib.util.spec_from_file_location('weeks', src)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
-    data = build(mod.WEEKS)
+    data = build(mod.WEEKS, getattr(mod, 'REMOVE', None))
     with open(dest, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
     cells = sum(len(ed['sets']) for w in data['weeks'] for d in w['days'] for ed in d['cells'].values())

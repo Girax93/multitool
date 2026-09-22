@@ -155,6 +155,28 @@ export function restartTimer(t: Timer, now: number): Timer {
   return startTimer(t, now);
 }
 
+/**
+ * Lengthen or shorten a run in flight (workout rest: "+30 s" / "−30 s").
+ * Running: the end moves and the duration follows, so progress and a later
+ * restart use the adjusted length; shortening past the end finishes the timer
+ * now. Paused: the remaining time changes. Idle / finished: the duration.
+ */
+export function extendTimer(t: Timer, deltaMs: number, now: number): Timer {
+  if (!Number.isFinite(deltaMs) || deltaMs === 0) return t;
+  const duration = Math.max(MIN_DURATION_MS, Math.min(MAX_DURATION_MS, t.durationMs + deltaMs));
+  switch (t.state) {
+    case 'running': {
+      const endsAt = (t.endsAt ?? now) + deltaMs;
+      if (endsAt <= now) return finishTimer({ ...t, durationMs: duration, endsAt: now }, now);
+      return { ...t, durationMs: duration, endsAt };
+    }
+    case 'paused':
+      return { ...t, durationMs: duration, remainingMs: Math.max(0, (t.remainingMs ?? t.durationMs) + deltaMs) };
+    default:
+      return { ...t, durationMs: duration };
+  }
+}
+
 export function finishTimer(t: Timer, now: number): Timer {
   if (t.state === 'finished') return t;
   return { ...t, state: 'finished', finishedAt: now, endsAt: t.endsAt ?? now };

@@ -8,6 +8,7 @@ import { uid } from '../../core/dom.js';
 import {
   alarmId,
   createTimer,
+  extendTimer,
   finishTimer,
   pauseTimer,
   reconcile,
@@ -115,6 +116,18 @@ export class TimerService {
 
   restart(id: string): void {
     this.mutate(id, (t) => restartTimer(t, Date.now()));
+  }
+
+  /** Add or remove time while a timer runs (+30 s / −30 s); the alarm is rescheduled. */
+  extend(id: string, deltaMs: number): void {
+    this.mutate(id, (t) => extendTimer(t, deltaMs, Date.now()));
+  }
+
+  /** Run a timer again with a given length (a rest timer's "Repeat" uses the configured rest, not an adjusted one). */
+  restartWith(id: string, durationMs: number): void {
+    const now = Date.now();
+    this.ctx.native.cancelNotification(alarmId(id));
+    this.mutate(id, (t) => startTimer({ ...t, durationMs }, now));
   }
 
   /** "Off" after ringing. One-off timers disappear; saved ones return to idle. */

@@ -1615,3 +1615,98 @@ body.sheet-open {
 .chip-link {
   color: var(--accent-2);
 }
+
+/* ---- Workout mode (session.ts) ------------------------------------------- */
+.wk-top-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.wk-session-btn {
+  gap: 6px;
+}
+.sess-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.sess-title {
+  font-weight: 600;
+  flex: 1;
+}
+/* Today's row: an accent bar on the day cell and a light wash across the row. */
+.wk-table tr.wk-today > th.wk-dayh {
+  box-shadow: inset 4px 0 0 var(--accent);
+}
+.wk-table tr.wk-today > td {
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg));
+}
+.sess-panel {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px calc(10px + var(--safe-bottom));
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  text-align: center;
+}
+.sess-panel[data-phase='work'] {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+}
+.sess-panel[data-phase='finished'] {
+  background: color-mix(in srgb, #c0392b 16%, var(--surface));
+}
+.sess-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.sess-count {
+  font-family: var(--mono);
+  font-size: 44px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.sess-count-done {
+  animation: sess-blink 1s steps(2, start) infinite;
+}
+@keyframes sess-blink {
+  to {
+    opacity: 0.35;
+  }
+}
+.sess-sub {
+  color: var(--muted);
+  font-size: 13px;
+}
+.sess-actions,
+.sess-idle,
+.sess-timed {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+}
+.sess-hint {
+  margin: 0;
+}
+.field-label .field-hint {
+  display: block;
+  font-weight: 400;
+  color: var(--muted);
+}
+/* Keep toasts clear of the workout-mode panel. */
+body:has(.sess-panel) .toasts {
+  bottom: calc(170px + var(--safe-bottom));
+}

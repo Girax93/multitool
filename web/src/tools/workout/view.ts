@@ -32,6 +32,7 @@ import {
   type WorkoutSettings,
 } from './model.js';
 import type { ViewPref, WorkoutService } from './service.js';
+import { disposeSession, renderSession } from './session.js';
 import { renderWorkoutSettings } from './settings-view.js';
 
 /** The mounted root, so inline editing can find cells again after a re-render. */
@@ -59,7 +60,7 @@ export function mountWorkoutView(host: HTMLElement, ctx: ToolContext, service: W
       commitInline();
       const before = host.querySelector<HTMLElement>('.wk-scroll');
       const scroll = before ? { top: before.scrollTop, left: before.scrollLeft } : null;
-      replace(host, sub === 'settings' ? renderWorkoutSettings(service, ctx) : renderLog(service, ctx));
+      replace(host, sub === 'settings' ? renderWorkoutSettings(service, ctx) : sub === 'session' ? renderSession(service, ctx) : renderLog(service, ctx));
       const after = host.querySelector<HTMLElement>('.wk-scroll');
       if (after) {
         if (navigated) {
@@ -89,15 +90,16 @@ export function mountWorkoutView(host: HTMLElement, ctx: ToolContext, service: W
       render();
     }),
   );
-  // Re-render the log whenever data changes (cheap: grids are small).
-  unsubs.push(service.weeks.subscribe(() => sub === '' && render(), false));
+  // Re-render the log (and workout mode) whenever data changes (cheap: grids are small).
+  const live = (): boolean => sub === '' || sub === 'session';
+  unsubs.push(service.weeks.subscribe(() => live() && render(), false));
   unsubs.push(
     service.currentWeekId.subscribe(() => {
       navigated = true;
       if (sub === '') render();
     }, false),
   );
-  unsubs.push(service.settings.subscribe(() => sub === '' && render(), false));
+  unsubs.push(service.settings.subscribe(() => live() && render(), false));
   unsubs.push(
     service.view.subscribe(() => {
       navigated = true;
@@ -131,6 +133,7 @@ export function mountWorkoutView(host: HTMLElement, ctx: ToolContext, service: W
       closePopover();
       for (const u of unsubs) u();
       closeAllSheets();
+      disposeSession();
       if (root === host) root = null;
     },
   };
@@ -168,7 +171,22 @@ function renderLog(service: WorkoutService, ctx: ToolContext): HTMLElement {
 
   const view = service.view.get();
   const visible = visibleWeeks(weeks, week, view);
-  const top = h('div', { class: 'wk-top' }, renderLegend(settings), renderViewControl(service, view));
+  const top = h(
+    'div',
+    { class: 'wk-top' },
+    renderLegend(settings),
+    h(
+      'div',
+      { class: 'wk-top-right' },
+      h(
+        'button',
+        { class: 'btn btn-primary btn-sm wk-session-btn', dataset: { testid: 'session-open' }, title: 'Workout mode: today\'s row, rest timers', onClick: () => navigate(toolPath('workout', 'session')) },
+        svg(icons.play, 'icon icon-sm'),
+        'Workout',
+      ),
+      renderViewControl(service, view),
+    ),
+  );
   const tabs = view.mode === 'some' && weeks.length > view.per ? renderPageTabs(service, weeks, week, view.per) : null;
   const blocks = visible.map((w) => renderWeekBlock(service, ctx, w, weeks, settings, view.mode === 'one'));
 
@@ -346,7 +364,7 @@ function rich(text: string, ctx: ToolContext): Child[] {
 
 // ---- Inline editing --------------------------------------------------------------
 
-interface SetPos {
+export interface SetPos {
   dayId: string;
   exId: string;
   index: number;
@@ -372,7 +390,7 @@ function neighbourSet(week: Week, pos: SetPos, dir: -1 | 1): SetPos | undefined 
 }
 
 /** Type straight into a set cell; Enter / Tab go to the next set of the day. */
-function editSetCell(service: WorkoutService, weekId: string, pos: SetPos): void {
+export function editSetCell(service: WorkoutService, weekId: string, pos: SetPos): void {
   const td = findSetCell(weekId, pos);
   const w = service.get(weekId);
   if (!td || !w) return;
@@ -383,7 +401,10 @@ function editSetCell(service: WorkoutService, weekId: string, pos: SetPos): void
     mono: true,
     testid: 'set-inline',
     onCommit: (text: string, via: CommitVia) => {
-      if (text.trim() !== before.trim()) service.update(weekId, (x) => typeSet(x, pos.dayId, pos.exId, pos.index, text));
+      if (text.trim() !== before.trim()) {
+        service.update(weekId, (x) => typeSet(x, pos.dayId, pos.exId, pos.index, text));
+        if (text.trim()) service.setTyped.emit({ weekId, ...pos, text: text.trim() });
+      }
       const cur = service.get(weekId);
       if (!cur || via === 'blur') return;
       const next = neighbourSet(cur, pos, via === 'shift-tab' ? -1 : 1);
@@ -567,7 +588,7 @@ function openFootnoteMenu(x: number, y: number, service: WorkoutService, weekId:
   );
 }
 
-function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, settings: WorkoutSettings): HTMLElement {
+export function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, settings: WorkoutSettings, opts: { highlightDayId?: string } = {}): HTMLElement {
   const unit = settings.unit;
   const headRow = h(
     'tr',
@@ -607,7 +628,7 @@ function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, setti
 
   const body = h('tbody');
   for (const day of week.days) {
-    const tr = h('tr', { dataset: { day: day.id } });
+    const tr = h('tr', { class: day.id === opts.highlightDayId ? 'wk-today' : undefined, dataset: { day: day.id } });
     const dayBtn = h(
       'button',
       { class: 'wk-hbtn wk-day', dataset: { testid: 'day-header' }, onClick: () => openDayEditor(service, week.id, day.id) },
@@ -635,7 +656,7 @@ function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, setti
           h('span', null, ...rich(day.alt.trim(), ctx)),
         ),
       );
-      applyStyle(td, settings, day);
+      // The day's colour stays on the day cell; the other-workout cell is plain.
       tr.appendChild(td);
     } else {
       for (const ex of week.exercises) {
@@ -649,7 +670,10 @@ function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, setti
             h('button', { class: 'wk-cbtn', title: 'Type reps and marks; . .. … add notes; right-click or hold for colours', onClick: () => editSetCell(service, week.id, pos) }, ...setContent(cell)),
           );
           onContextAction(td, (x, y) => openSetMenu(x, y, service, ctx, week.id, pos));
-          applyStyle(td, settings, cell, ed, day);
+          // A colour marks exactly what it was put on: the set, or the exercise for
+          // the day. A red day colours only the "Wed" cell, so a day off and a
+          // skipped exercise can be told apart (Ari, 2026-09-23).
+          applyStyle(td, settings, cell, ed);
           tr.appendChild(td);
         }
       }
@@ -677,7 +701,7 @@ function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, setti
       ),
     );
     onContextAction(notesTd, (x, y) => openNotesMenu(x, y, service, week.id, day.id));
-    applyStyle(notesTd, settings, day.notesStyle, day);
+    applyStyle(notesTd, settings, day.notesStyle);
     tr.appendChild(notesTd);
     body.appendChild(tr);
   }
@@ -881,6 +905,7 @@ function openWeekMenu(service: WorkoutService, ctx: ToolContext, weekId: string)
     h(
       'div',
       { class: 'list' },
+      item('Workout mode (today, rest timers)', icons.play, () => navigate(toolPath('workout', 'session')), 'menu-session'),
       item('New week (copies exercises)', icons.plus, () => service.createWeek(), 'menu-new-week'),
       item('Edit exercises', icons.dumbbell, () => openExercisesEditor(service, weekId), 'menu-exercises'),
       item('Edit week: label, dates, days', icons.edit, () => openWeekEditor(service, ctx, weekId), 'menu-week'),

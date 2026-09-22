@@ -26,6 +26,8 @@ import {
   toggleRef,
   updateDay,
   updateExercise,
+  formatSeconds,
+  parseSeconds,
   updateExerciseDayStyle,
   updateFootnote,
   updateSet,
@@ -536,10 +538,42 @@ export function openExercisesEditor(service: WorkoutService, weekId: string, foc
       service.update(weekId, (x) => updateExercise(x, ex.id, { sets: n }));
       render();
     });
+    // Timed sets (handstand holds): workout mode counts the work time down before the rest.
+    const timed = h('input', { type: 'checkbox', checked: !!ex.timedSec, dataset: { testid: 'exercise-timed' } });
+    const work = h('input', {
+      type: 'text',
+      class: 'input input-short',
+      inputMode: 'numeric',
+      placeholder: '1:30',
+      value: ex.timedSec ? formatSeconds(ex.timedSec) : '',
+      hidden: !ex.timedSec,
+      'aria-label': 'Work time per set',
+      dataset: { testid: 'exercise-work' },
+    });
+    timed.addEventListener('change', () => {
+      const sec = timed.checked ? (parseSeconds(work.value) ?? service.settings.get().session.workSec) : undefined;
+      service.update(weekId, (x) => updateExercise(x, ex.id, { timedSec: sec }));
+      work.hidden = !timed.checked;
+      if (timed.checked) {
+        work.value = formatSeconds(sec ?? 0);
+        work.focus();
+      }
+    });
+    work.addEventListener('change', () => {
+      const sec = parseSeconds(work.value);
+      if (sec && sec > 0) service.update(weekId, (x) => updateExercise(x, ex.id, { timedSec: sec }));
+      else work.value = ex.timedSec ? formatSeconds(ex.timedSec) : '';
+    });
     return h(
       'div',
       { class: 'ex-row' },
-      h('div', { class: 'ex-fields' }, name, h('div', { class: 'row' }, weight, h('span', { class: 'muted-inline' }, '×'), sets, h('span', { class: 'muted-inline' }, 'sets'))),
+      h(
+        'div',
+        { class: 'ex-fields' },
+        name,
+        h('div', { class: 'row' }, weight, h('span', { class: 'muted-inline' }, '×'), sets, h('span', { class: 'muted-inline' }, 'sets')),
+        h('div', { class: 'row' }, h('label', { class: 'check check-inline', title: 'Each set is a timed hold; workout mode counts it down' }, timed, h('span', null, 'Timed sets')), work),
+      ),
       h(
         'div',
         { class: 'ex-actions' },

@@ -55,3 +55,21 @@ export function getTool(id: string): ToolDefinition | undefined {
 export function allTools(): ToolDefinition[] {
   return [...tools.values()].sort((a, b) => (a.order ?? 100) - (b.order ?? 100) || a.name.localeCompare(b.name));
 }
+
+// ---- Tools using tools -----------------------------------------------------
+//
+// A tool can offer its background service to other tools (the workout
+// companion runs its rest timers through the Timers tool). The provider
+// registers the service in init(); a consumer asks for it by tool id and gets
+// undefined when that tool is disabled or not started yet, so it can degrade
+// gracefully instead of importing the other tool's module directly.
+
+const services = new Map<string, unknown>();
+
+export function provideService(toolId: string, service: unknown): void {
+  services.set(toolId, service);
+}
+
+export function useService<T>(toolId: string): T | undefined {
+  return services.get(toolId) as T | undefined;
+}

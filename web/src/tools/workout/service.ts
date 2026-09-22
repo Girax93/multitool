@@ -3,10 +3,13 @@
 
 import { uid } from '../../core/dom.js';
 import type { ToolContext } from '../../core/registry.js';
-import { signal, type Signal } from '../../core/store.js';
+import { Emitter, signal, type Signal } from '../../core/store.js';
 import {
   DEFAULT_SETTINGS,
+  addDays,
   emptyDuplicateWeeks,
+  mergeSettings,
+  mondayOf,
   newWeek,
   nextWeekLabelFrom,
   sortWeeks,
@@ -28,12 +31,22 @@ export interface ViewPref {
 }
 export const DEFAULT_VIEW: ViewPref = { mode: 'one', per: 3 };
 
+/** A set cell was typed into (workout mode listens to start the rest timer). */
+export interface SetTyped {
+  weekId: string;
+  dayId: string;
+  exId: string;
+  index: number;
+  text: string;
+}
+
 export class WorkoutService {
   readonly weeks: Signal<Week[]> = signal<Week[]>([]);
   readonly settings: Signal<WorkoutSettings> = signal<WorkoutSettings>(DEFAULT_SETTINGS);
   readonly currentWeekId: Signal<string | null> = signal<string | null>(null);
   readonly view: Signal<ViewPref> = signal<ViewPref>(DEFAULT_VIEW);
   readonly status: Signal<string | null> = signal<string | null>(null);
+  readonly setTyped = new Emitter<SetTyped>();
 
   constructor(private readonly ctx: ToolContext) {}
 
@@ -44,7 +57,7 @@ export class WorkoutService {
       this.ctx.kv.get<string>(CURRENT_KEY),
       this.ctx.kv.get<Partial<ViewPref>>(VIEW_KEY),
     ]);
-    if (settings) this.settings.set({ ...DEFAULT_SETTINGS, ...settings });
+    if (settings) this.settings.set(mergeSettings(settings));
     if (view) this.view.set({ ...DEFAULT_VIEW, ...view });
     const weeks = sortWeeks(entries.map((e) => e.value));
     this.weeks.set(weeks);
@@ -63,7 +76,7 @@ export class WorkoutService {
     for (const key of keys) {
       if (key === SETTINGS_KEY) {
         const s = await this.ctx.kv.get<Partial<WorkoutSettings>>(SETTINGS_KEY);
-        this.settings.set({ ...DEFAULT_SETTINGS, ...(s ?? {}) });
+        this.settings.set(mergeSettings(s));
       } else if (key.startsWith(WEEK_PREFIX)) {
         const id = key.slice(WEEK_PREFIX.length);
         const week = await this.ctx.kv.get<Week>(key);
@@ -112,20 +125,30 @@ export class WorkoutService {
     return after;
   }
 
-  /** Start a new week after the latest one (exercises copied). */
+  /**
+   * Start a new week after the latest one (exercises copied). Without a
+   * start date it is the week after the latest one, or the current calendar
+   * week when that is later (weeks were skipped); the label counts calendar
+   * weeks since the highest numbered one.
+   */
   createWeek(opts: { startDate?: string; label?: string; copyFrom?: Week } = {}): Week {
     const list = this.weeks.get();
     const previous = opts.copyFrom ?? list[list.length - 1];
     const settings = this.settings.get();
+    const thisMonday = mondayOf(new Date());
+    let startDate = opts.startDate;
+    if (!startDate) {
+      const after = previous?.startDate ? addDays(previous.startDate, 7) : thisMonday;
+      startDate = after < thisMonday ? thisMonday : after;
+    }
     const week = newWeek({
       id: uid('wk'),
       dayIds: settings.defaultDays.map(() => uid('d')),
       now: Date.now(),
       settings,
       previous,
-      startDate: opts.startDate,
-      // Count on from the highest numbered label, not the last week's (which may be a gap week).
-      label: opts.label ?? nextWeekLabelFrom(list),
+      startDate,
+      label: opts.label ?? nextWeekLabelFrom(list, startDate),
     });
     this.weeks.set(sortWeeks([...list, week]));
     void this.ctx.kv.set(WEEK_PREFIX + week.id, week);
@@ -153,15 +176,23 @@ export class WorkoutService {
    * week with content already carries (a "Week 38" started by hand before the
    * real one arrived) are removed. Returns how many were added / replaced / removed.
    */
-  async importWeeks(weeks: Week[], settings?: WorkoutSettings): Promise<{ added: number; replaced: number; removed: number }> {
+  async importWeeks(weeks: Week[], settings?: WorkoutSettings, remove: string[] = []): Promise<{ added: number; replaced: number; removed: number }> {
     const byId = new Map(this.weeks.get().map((w) => [w.id, w]));
     let added = 0;
     let replaced = 0;
+    let removed = 0;
     for (const w of weeks) {
       if (byId.has(w.id)) replaced++;
       else added++;
       byId.set(w.id, w);
       await this.ctx.kv.set(WEEK_PREFIX + w.id, w);
+    }
+    // Weeks the file retires (a renumbered import that replaces earlier ids).
+    for (const id of remove) {
+      if (!byId.has(id)) continue;
+      byId.delete(id);
+      await this.ctx.kv.delete(WEEK_PREFIX + id);
+      removed++;
     }
     const imported = new Set(weeks.map((w) => w.id));
     const all = [...byId.values()];
@@ -169,6 +200,7 @@ export class WorkoutService {
     for (const d of duplicates) {
       byId.delete(d.id);
       await this.ctx.kv.delete(WEEK_PREFIX + d.id);
+      removed++;
     }
     this.weeks.set(sortWeeks([...byId.values()]));
     if (settings) await this.updateSettings(settings);
@@ -176,7 +208,7 @@ export class WorkoutService {
     const last = this.weeks.get()[this.weeks.get().length - 1];
     if (last) this.select(last.id);
     this.updateStatus();
-    return { added, replaced, removed: duplicates.length };
+    return { added, replaced, removed };
   }
 
   private updateStatus(): void {

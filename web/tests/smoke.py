@@ -323,7 +323,7 @@ def main() -> int:
             }))
             page.goto(base + "#/t/workout/settings", wait_until="networkidle")
             page.set_input_files("[data-testid='workout-import-file']", str(import_file))
-            expect(page.locator(".toast")).to_contain_text("removed 1 empty duplicate", timeout=10_000)
+            expect(page.locator(".toast")).to_contain_text("removed 1 old or empty duplicate", timeout=10_000)
             page.goto(base + "#/t/workout", wait_until="networkidle")
             page.click("[data-testid='view-all']")
             expect(page.locator("[data-testid='workout-grid']")).to_have_count(3)  # the empty third week was replaced, not added to
@@ -335,6 +335,25 @@ def main() -> int:
             m = re.search(r"(\d+)\s*$", dup_label)
             if m:
                 expect(page.locator("[data-testid='week-label'] .wk-label-title")).to_have_text(dup_label[: m.start(1)] + str(int(m.group(1)) + 1))
+
+            # workout mode: today's row, a rest timer through the Timers tool, +30 s, Off
+            page.goto(base + "#/t/workout", wait_until="networkidle")
+            page.click("[data-testid='session-open']")
+            expect(page.locator("[data-testid='session']")).to_be_visible()
+            panel = page.locator("[data-testid='session-panel']")
+            expect(panel).to_have_attribute("data-phase", "idle")
+            page.click("[data-testid='session-rest-start']")
+            expect(panel).to_have_attribute("data-phase", "rest")
+            before = page.locator("[data-testid='session-countdown']").inner_text()
+            page.click("[data-testid='session-plus']")
+            page.wait_for_timeout(300)
+            after = page.locator("[data-testid='session-countdown']").inner_text()
+            assert after > before, f"+30 s should lengthen the rest ({before} → {after})"
+            page.screenshot(path=str(SHOTS / "12-workout-mode.png"))
+            page.click("[data-testid='session-off']")
+            expect(panel).to_have_attribute("data-phase", "idle")
+            page.click("[data-testid='session-back']")
+            expect(page.locator("[data-testid='workout-grid']")).to_be_visible()
 
             # light theme render
             light = browser.new_context(viewport=PHONE, color_scheme="light")

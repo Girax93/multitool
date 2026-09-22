@@ -21,6 +21,18 @@ export interface MarkDef {
   meaning: string;
 }
 
+/** Workout mode: what happens after a set is typed (see session.ts). */
+export interface SessionSettings {
+  /** Rest between sets, seconds. */
+  restSec: number;
+  /** What "+30 s" / "−30 s" add or take, seconds. */
+  stepSec: number;
+  /** Default work time per set of a timed exercise (handstands), seconds. */
+  workSec: number;
+  /** After the rest of the exercise before a timed one, offer to start it. */
+  offerTimed: boolean;
+}
+
 export interface WorkoutSettings {
   trackBodyweight: boolean;
   unit: 'kg' | 'lb';
@@ -28,6 +40,7 @@ export interface WorkoutSettings {
   defaultSets: number;
   legend: LegendEntry[];
   marks: MarkDef[];
+  session: SessionSettings;
 }
 
 /** Colour / star annotation. `c` is a legend id. */
@@ -53,6 +66,11 @@ export interface Exercise extends CellStyle {
   /** Free text, e.g. "24kg". */
   weight: string;
   sets: number;
+  /**
+   * A timed exercise (handstand holds): each set is `timedSec` seconds of
+   * work, which workout mode counts down before the rest. Absent = reps.
+   */
+  timedSec?: number;
 }
 
 export interface DayEntry extends CellStyle {
@@ -116,6 +134,8 @@ export const DEFAULT_MARKS: MarkDef[] = [
   { symbol: '(x)', meaning: 'Different weight' },
 ];
 
+export const DEFAULT_SESSION: SessionSettings = { restSec: 90, stepSec: 30, workSec: 90, offerTimed: true };
+
 export const DEFAULT_SETTINGS: WorkoutSettings = {
   trackBodyweight: true,
   unit: 'kg',
@@ -123,7 +143,14 @@ export const DEFAULT_SETTINGS: WorkoutSettings = {
   defaultSets: 3,
   legend: DEFAULT_LEGEND,
   marks: DEFAULT_MARKS,
+  session: DEFAULT_SESSION,
 };
+
+/** Stored settings may predate a field (or hold a partial `session`): fill in the defaults. */
+export function mergeSettings(stored: Partial<WorkoutSettings> | null | undefined): WorkoutSettings {
+  const s = stored ?? {};
+  return { ...DEFAULT_SETTINGS, ...s, session: { ...DEFAULT_SESSION, ...(s.session ?? {}) } };
+}
 
 // ---- Dates -----------------------------------------------------------------
 
@@ -205,7 +232,7 @@ export function newWeek(input: NewWeekInput): Week {
     else startDate = mondayOf(new Date(input.now));
   }
   const exercises: Exercise[] = previous
-    ? previous.exercises.map((e) => ({ id: e.id, name: e.name, weight: e.weight, sets: e.sets }))
+    ? previous.exercises.map((e) => clean({ id: e.id, name: e.name, weight: e.weight, sets: e.sets, timedSec: e.timedSec }))
     : [];
   const days = settings.defaultDays.map((wd, i) => newDay(input.dayIds[i] ?? `${input.id}-${wd}`, wd, startDate, exercises));
   return {
@@ -232,21 +259,29 @@ export function nextWeekLabel(previousLabel: string | undefined, startDate: stri
 }
 
 /**
- * The label for a week added after `weeks`: one more than the highest number
- * any existing label ends with ("Week 80" → "Week 81"), so a gap week without
- * a number, or a week that was added twice, never produces a duplicate label.
- * Undefined when no label is numbered (newWeek then picks its default).
+ * The label for a week added after `weeks`. Ari numbers weeks since he
+ * started, every calendar week counting whether he trained or not, so the
+ * number is the highest existing one plus the calendar weeks between that
+ * week and `startDate` ("Week 86" on 21 Sep → "Week 88" for 5 Oct); without
+ * dates it is simply one more. Undefined when no label is numbered (newWeek
+ * then picks its default).
  */
-export function nextWeekLabelFrom(weeks: Week[]): string | undefined {
-  let best: { prefix: string; n: number } | null = null;
+export function nextWeekLabelFrom(weeks: Week[], startDate?: string): string | undefined {
+  let best: { prefix: string; n: number; start?: string } | null = null;
   for (const w of weeks) {
     const m = /^(.*?)(\d+)\s*$/.exec(w.label.trim());
     if (m && m[2]) {
       const n = parseInt(m[2], 10);
-      if (!best || n > best.n) best = { prefix: m[1] ?? '', n };
+      if (!best || n > best.n) best = { prefix: m[1] ?? '', n, start: w.startDate };
     }
   }
-  return best ? `${best.prefix}${best.n + 1}` : undefined;
+  if (!best) return undefined;
+  let step = 1;
+  if (startDate && best.start) {
+    const days = (fromIsoDate(startDate).getTime() - fromIsoDate(best.start).getTime()) / 86_400_000;
+    step = Math.max(1, Math.round(days / 7));
+  }
+  return `${best.prefix}${best.n + step}`;
 }
 
 /** True when anything was logged: a set, another workout, notes, marks, bodyweight, a note in the notes row or a week note. */
@@ -566,6 +601,8 @@ export interface WorkoutExport {
   exportedAt: string;
   weeks: Week[];
   settings?: WorkoutSettings;
+  /** Ids of weeks the file retires (a renumbered import replacing earlier ids). */
+  remove?: string[];
 }
 
 export function exportWeeks(weeks: Week[], settings?: WorkoutSettings): WorkoutExport {
@@ -583,7 +620,8 @@ export function parseWorkoutExport(data: unknown): WorkoutExport {
     w.label ??= defaultWeekLabel(w.startDate);
     w.createdAt ??= Date.now();
   }
-  return { format: 'multitool-workout', version: 1, exportedAt: d.exportedAt ?? '', weeks: d.weeks, settings: d.settings };
+  const remove = Array.isArray(d.remove) ? d.remove.filter((id): id is string => typeof id === 'string') : undefined;
+  return { format: 'multitool-workout', version: 1, exportedAt: d.exportedAt ?? '', weeks: d.weeks, settings: d.settings, ...(remove?.length ? { remove } : {}) };
 }
 
 // ---- Links in free text ------------------------------------------------------
@@ -622,4 +660,59 @@ export function splitLinks(text: string): TextPart[] {
 
 export function hasLink(text: string | undefined): boolean {
   return !!text && splitLinks(text).some((p) => 'url' in p);
+}
+
+// ---- Workout mode helpers ---------------------------------------------------------
+
+/** The week whose seven days contain `date` (ISO), if any. */
+export function weekForDate(weeks: Week[], date: string): Week | undefined {
+  return weeks.find((w) => w.startDate && w.startDate <= date && date < addDays(w.startDate, 7));
+}
+
+/** The day of a week that falls on `date`, else the first day that has nothing logged yet, else the first day. */
+export function sessionDay(week: Week, date: string): DayEntry | undefined {
+  return week.days.find((d) => d.date === date) ?? week.days.find((d) => !dayTrained(d)) ?? week.days[0];
+}
+
+/** Sets of an exercise on a day that still hold nothing. */
+export function emptySetIndexes(day: DayEntry, ex: Exercise): number[] {
+  const sets = day.cells[ex.id]?.sets ?? [];
+  const out: number[] = [];
+  for (let i = 0; i < ex.sets; i++) if (!(sets[i]?.v ?? '').trim()) out.push(i);
+  return out;
+}
+
+/**
+ * The timed exercise that comes right after `exId` in the week's order and has
+ * no set logged on `day` yet — the one workout mode offers to start when the
+ * previous exercise's rest is turned off.
+ */
+export function nextTimedExercise(week: Week, day: DayEntry, exId: string): Exercise | undefined {
+  const i = week.exercises.findIndex((e) => e.id === exId);
+  const next = week.exercises[i + 1];
+  if (!next || !next.timedSec) return undefined;
+  return emptySetIndexes(day, next).length === next.sets ? next : undefined;
+}
+
+/** True when every set of the exercise on that day holds something. */
+export function exerciseDone(day: DayEntry, ex: Exercise): boolean {
+  return emptySetIndexes(day, ex).length === 0;
+}
+
+/** "1:30" for 90 seconds, "0:45", "2:00". */
+export function formatSeconds(sec: number): string {
+  const s = Math.max(0, Math.round(sec));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** "1:30" / "90" / "1m30s" → seconds, or null. */
+export function parseSeconds(text: string): number | null {
+  const t = text.trim().toLowerCase();
+  if (!t) return null;
+  const mmss = /^(\d+):(\d{1,2})$/.exec(t);
+  if (mmss) return parseInt(mmss[1] ?? '0', 10) * 60 + parseInt(mmss[2] ?? '0', 10);
+  if (/^\d+$/.test(t)) return parseInt(t, 10);
+  const m = /^(?:(\d+)\s*m)?\s*(?:(\d+)\s*s?)?$/.exec(t);
+  if (m && (m[1] || m[2])) return parseInt(m[1] ?? '0', 10) * 60 + parseInt(m[2] ?? '0', 10);
+  return null;
 }

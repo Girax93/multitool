@@ -1,4 +1,4 @@
-import { registerTool, type ToolContext } from '../../core/registry.js';
+import { provideService, registerTool, type ToolContext } from '../../core/registry.js';
 import { signal } from '../../core/store.js';
 import { icons } from '../../ui/icons.js';
 import { TimerService } from './service.js';
@@ -18,6 +18,7 @@ registerTool({
     service = new TimerService(ctx);
     service.status.subscribe((s) => status.set(s));
     await service.init();
+    provideService('timer', service); // other tools (workout companion) run their countdowns through it
   },
   mount(host, ctx) {
     if (!service) throw new Error('Timer service not initialised');

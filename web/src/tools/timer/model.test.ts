@@ -8,6 +8,7 @@ import {
   SECOND,
   alarmId,
   createTimer,
+  extendTimer,
   finishTimer,
   formatCountdown,
   formatDuration,
@@ -136,4 +137,21 @@ test('createTimer falls back to a duration name', () => {
   const t = createTimer({ id: 'x', name: '   ', durationMs: 5 * MINUTE, saved: true, now: T0 });
   assert.equal(t.name, '5m');
   assert.equal(t.saved, true);
+});
+
+test('extend moves the end of a running timer and finishes it when shortened past now', () => {
+  const t0 = createTimer({ id: 'x', name: 'Rest', durationMs: 90_000, saved: false, now: 1_000 });
+  const running = startTimer(t0, 1_000);
+  const longer = extendTimer(running, 30_000, 10_000);
+  assert.equal(longer.endsAt, 121_000);
+  assert.equal(longer.durationMs, 120_000);
+  assert.equal(longer.state, 'running');
+  const shorter = extendTimer(longer, -30_000, 20_000);
+  assert.equal(shorter.endsAt, 91_000);
+  const done = extendTimer(shorter, -80_000, 20_000);
+  assert.equal(done.state, 'finished');
+  assert.equal(done.endsAt, 20_000);
+  const paused = extendTimer(pauseTimer(shorter, 31_000), 5_000, 31_000);
+  assert.equal(paused.remainingMs, 65_000);
+  assert.equal(extendTimer(t0, 0, 5).durationMs, 90_000);
 });

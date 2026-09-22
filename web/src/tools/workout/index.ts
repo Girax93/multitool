@@ -1,6 +1,7 @@
-// Workout log: Excel-style weekly grid with numbered footnotes, colour codes,
-// marks and optional bodyweight. Pure logic in model.ts, persistence in
-// service.ts, UI in view.ts / editors.ts / settings-view.ts.
+// Workout companion: Excel-style weekly grid with numbered footnotes, colour
+// codes, marks and optional bodyweight, plus a workout mode that runs rest and
+// hold timers through the Timers tool. Pure logic in model.ts, persistence in
+// service.ts, UI in view.ts / session.ts / editors.ts / settings-view.ts.
 
 import { registerTool, type ToolContext } from '../../core/registry.js';
 import { signal } from '../../core/store.js';
@@ -13,8 +14,8 @@ const status = signal<string | null>(null);
 
 registerTool({
   id: 'workout',
-  name: 'Workout log',
-  description: 'Sets, reps and notes in a spreadsheet-style weekly grid.',
+  name: 'Workout Companion',
+  description: 'Sets, reps and notes in a weekly grid; workout mode with rest timers.',
   icon: icons.dumbbell,
   order: 20,
   status,

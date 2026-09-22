@@ -1,15 +1,20 @@
-"""Transcription of Ari's OneNote workout log, weeks 60-80 (screenshots, 2026-09-22).
+"""Transcription of Ari's OneNote workout log, sheet weeks 60-80 → app weeks 60-86 (screenshots, 2026-09-22).
 
-Same notation as weeks-38-59.py (decoded by scripts/import/build.py).
-Dates (Ari, 2026-09-22): Portugal 13-27 Apr = weeks 63, 64 + Mon of 65; Austria/Kassel 9-11 Jun =
-week 70; Fusion 24-28 Jun = week 72; Week 80 = this week (21 Sep). So weeks 60-69 follow on from
-week 59 without a gap, from week 70 the calendar is one week later than the numbering, the
-unnumbered "11 WK AFTER FUSION!!" block is 7 Sep and Week 80 is 21 Sep. The calendar weeks with
-no entry at all (1 Jun, 17/24/31 Aug, 14 Sep) are added as "No workout" weeks with red days
-(Ari: "keep them in there but mark them with a no workout tag … same as marking those days in red").
+Same notation as weeks-38-59.py (decoded by scripts/import/build.py); an exercise may carry a third
+element, the work seconds of a timed hold (handstands) → Exercise.timedSec.
+Dates (Ari, 2026-09-22): Portugal 13-27 Apr = sheet weeks 63, 64 + Mon of 65; Austria/Kassel
+9-11 Jun = sheet week 70; Fusion 24-28 Jun = sheet week 72; the current week is 21 Sep. The sheet
+skipped calendar weeks from its week 70 on (1 Jun, 17/24/31 Aug, 14 Sep have no entry at all) and
+left the "11 WK AFTER FUSION!!" block unnumbered. Ari (2026-09-23): every calendar week gets its
+number ("just add an empty week, give it the correct week number and date, and shift accordingly"),
+so from 1 Jun the app's numbers run one ahead of the sheet: sheet 70 = Week 71 … sheet 79 = Week 80,
+the empty weeks are 70, 81, 82, 83 and 85, "11 WK AFTER FUSION!!" = Week 84 (the text is its week
+note) and the current week (sheet 80) = Week 86. Empty weeks have red days (did not work out).
+REMOVE retires the ids of the first version of this batch (labelled "No workout" / the FUSION block).
 Decisions for this batch (see the project doc):
   - every empty past day is red (did not work out), also where the sheet left the label white
-    (76 Fri, 77-79, the Wed/Fri of the "11 WK" block); week 80's Wed/Fri lie ahead and stay plain;
+    (76 Fri, 77-79, the Wed/Fri of the "11 WK" block); the current week's Wed/Fri lie ahead and stay plain;
+  - the handstand exercise is a timed hold: 90 s work per set (Ari: the only timed exercise so far);
   - a day whose only entry is another workout (67 Mon "GYM", 68 Mon/Wed "Gym / USC", 71 Mon
     "Calisthenics class") → other-workout day; the sheet's red / gold day colour is kept;
   - "Read the notes!" written across the chest cells (65 Mon, 67 Mon) is kept in those cells;
@@ -35,17 +40,20 @@ ALT = lambda wd, what, bw=None, notes='', marks='', colour=None: (wd, bw, notes,
 PS = ('Pistol Squats', 'MOVE TOWARDS PRISONER PS.')
 ROWS = ('BENCH: (1st set without) Dumbbell Rows', '28kg')
 CHEST26, CHEST24 = ('+1 step Chest Press', '26kg'), ('+1 step Chest Press', '24kg')
-HS = ('1.5min Handstand practice!', '')
+HS = ('1.5min Handstand practice!', '', 90)  # timed hold, 1:30 per set
 TRI = ('Bent-over triceps push-ups', 'x = wall, y = bench, z = floor')
 CURLS16 = ('Bicep Curls', '16kg')
 CURLS14 = ('Bicep Curls', '14kg')
 CURLS_PA = ('Bicep Curls', '14kg pure,assisted')
 CURLS_AIM = ('Bicep Curls', '14kg pure,assisted (8-10 aim)')
 
-# From week 70 the calendar is one week behind the numbering (see the docstring).
-def shifted(n):
-    import datetime as dt
-    return (dt.date(2025, 2, 3) + dt.timedelta(days=7 * (n - 1) + 7)).isoformat()
+# Ids of the first version of this batch (2026-09-22), replaced by the numbered weeks below.
+REMOVE = ['import-gap-2026-06-01', 'import-gap-2026-08-17', 'import-gap-2026-08-24', 'import-gap-2026-08-31',
+          'import-gap-2026-09-14', 'import-week-11-wk-after-fusion']
+
+# Sheet week n (70-79) is app week n + 1: one calendar week later than the sheet's numbering.
+def S(n):
+    return n + 1
 
 # ---------------------------------------------------------------- Week 60
 W(60,
@@ -194,17 +202,16 @@ W(69,
       3: ['Focused on staying "in the palm"']},
   pn={5: ['All on the floor. New technique - much harder.']})
 
-# ---------------------------------------------------------------- (no entry: week of 1 Jun 2026)
+# ---------------------------------------------------------------- Week 70 (1 Jun: no entry in the sheet)
 GAP_EX = [PS, ROWS, CHEST24, HS, CURLS_AIM, TRI]
 
-def gap(start, n):
-    W(n, ex=GAP_EX, days=[RED('Mon'), RED('Wed'), RED('Fri')], sets=[E, E, E],
-      start=start, label='No workout', wid=f'import-gap-{start}')
+def gap(n):
+    W(n, ex=GAP_EX, days=[RED('Mon'), RED('Wed'), RED('Fri')], sets=[E, E, E])
 
-gap('2026-06-01', 69.5)
+gap(70)
 
-# ---------------------------------------------------------------- Week 70 (9-11 Jun)
-W(70, start=shifted(70),
+# ---------------------------------------------------------------- Week 71 (sheet 70; 9-11 Jun)
+W(S(70),
   ex=[PS, ROWS, CHEST24, HS, CURLS_AIM, TRI],
   days=[D('Mon', 87.0, 'Lower back pain since a week.'), RED('Wed', 'Austria'), RED('Fri', 'Kassel, summer party')],
   sets=[
@@ -215,9 +222,9 @@ W(70, start=shifted(70),
   fn={2: ['Until complete failure!-'], 3: ["Focus on the inside of the palm. That's where the weight should be. Fingers for press-back."]},
   pn={5: ['All on the floor. New technique - much harder.']})
 
-# ---------------------------------------------------------------- Week 71
+# ---------------------------------------------------------------- Week 72 (sheet 71)
 # Mon "Calisthenics class" (gold in the sheet) → other workout, gold kept.
-W(71, start=shifted(71),
+W(S(71),
   ex=[PS, ROWS, CHEST24, HS, CURLS_AIM, TRI],
   days=[ALT('Mon', 'Calisthenics class', colour='gold'), RED('Wed', 'Fixed desk instead'), D('Fri', 86.65)],
   sets=[
@@ -229,8 +236,8 @@ W(71, start=shifted(71),
       5: ['Legs a biiit further away = easier.']},
   pn={5: ['All on the floor. New technique - much harder.']})
 
-# ---------------------------------------------------------------- Week 72 (Fusion 24-28 Jun)
-W(72, start=shifted(72),
+# ---------------------------------------------------------------- Week 73 (sheet 72; Fusion 24-28 Jun)
+W(S(72),
   ex=[PS, ROWS, CHEST24, HS, CURLS_AIM, TRI],
   days=[D('Mon', 85.35), RED('Wed', 'FUSION'), RED('Fri', 'FUSION')],
   sets=[
@@ -242,27 +249,27 @@ W(72, start=shifted(72),
       3: ['Both not bad! Focus on inside-palm, and kicking up a bit. Try to lean forward and use fingers to ensure no falling', 'Exhausted (-20 sec)']},
   pn={5: ['All on the floor. New technique - much harder.']})
 
-# ---------------------------------------------------------------- Weeks 73-79
-W(73, start=shifted(73), ex=GAP_EX,
+# ---------------------------------------------------------------- Weeks 74-80 (sheet 73-79)
+W(S(73), ex=GAP_EX,
   days=[RED('Mon', 'FUSION Recovery'), RED('Wed', 'FUSION Recovery'), RED('Fri', 'FUSION Recovery')], sets=[E, E, E],
   pn={5: ['All on the floor. New technique - much harder.']})
 
 SICK = 'Energy completely drained from sick. Recovery'
-W(74, start=shifted(74), ex=GAP_EX, days=[RED('Mon', 'Super sick in the weekend'), RED('Wed', SICK), RED('Fri', SICK)], sets=[E, E, E])
-W(75, start=shifted(75), ex=GAP_EX, days=[RED('Mon', SICK), RED('Wed', SICK), RED('Fri', SICK)], sets=[E, E, E])
-W(76, start=shifted(76), ex=GAP_EX,
+W(S(74), ex=GAP_EX, days=[RED('Mon', 'Super sick in the weekend'), RED('Wed', SICK), RED('Fri', SICK)], sets=[E, E, E])
+W(S(75), ex=GAP_EX, days=[RED('Mon', SICK), RED('Wed', SICK), RED('Fri', SICK)], sets=[E, E, E])
+W(S(76), ex=GAP_EX,
   days=[RED('Mon', SICK), D('Wed', None, 'STRECH ONLY - Still recovering', colour='gold'), RED('Fri')], sets=[E, E, E])
-W(77, start=shifted(77), ex=GAP_EX, days=[RED('Mon'), RED('Wed'), RED('Fri')], sets=[E, E, E])
-W(78, start=shifted(78), ex=GAP_EX, days=[RED('Mon'), RED('Wed'), RED('Fri')], sets=[E, E, E])
-W(79, start=shifted(79), ex=GAP_EX, days=[RED('Mon'), RED('Wed'), RED('Fri')], sets=[E, E, E])
+gap(S(77))
+gap(S(78))
+gap(S(79))
 
-# ---------------------------------------------------------------- (no entry: 17, 24, 31 Aug 2026)
-gap('2026-08-17', 79.2)
-gap('2026-08-24', 79.4)
-gap('2026-08-31', 79.6)
+# ---------------------------------------------------------------- Weeks 81-83 (17, 24, 31 Aug: no entry in the sheet)
+gap(81)
+gap(82)
+gap(83)
 
-# ---------------------------------------------------------------- "11 WK AFTER FUSION!!" (7 Sep)
-W(79.8, start='2026-09-07', label='11 WK AFTER FUSION!!', wid='import-week-11-wk-after-fusion',
+# ---------------------------------------------------------------- Week 84 ("11 WK AFTER FUSION!!", 7 Sep)
+W(84, x='11 WK AFTER FUSION!!',
   ex=GAP_EX,
   days=[D('Mon', None, 'Lost a lot of strength! Keep pushing :)'), RED('Wed', 'Moving + Lazy'), RED('Fri', 'Moving + Lazy')],
   sets=[
@@ -273,11 +280,11 @@ W(79.8, start='2026-09-07', label='11 WK AFTER FUSION!!', wid='import-week-11-wk
   pn={2: ['* Absolute zero strength. Do 3 min breaks for this one'],
       5: ['* ZERO strength, so my knees/legs just gave up to save my muscles haha.. Good form though!']})
 
-# ---------------------------------------------------------------- (no entry: 14 Sep 2026)
-gap('2026-09-14', 79.9)
+# ---------------------------------------------------------------- Week 85 (14 Sep: no entry in the sheet)
+gap(85)
 
-# ---------------------------------------------------------------- Week 80 (this week, 21 Sep)
-W(80, start='2026-09-21',
+# ---------------------------------------------------------------- Week 86 (sheet 80; the current week, 21 Sep)
+W(86,
   ex=GAP_EX,
   days=[D('Mon', 84.0), D('Wed'), D('Fri')],
   sets=[

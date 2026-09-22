@@ -5,7 +5,7 @@ import { h, replace, svg, uid } from '../../core/dom.js';
 import type { ToolContext } from '../../core/registry.js';
 import { navigate, toolPath } from '../../core/router.js';
 import { icons } from '../../ui/icons.js';
-import { WEEKDAYS, exportWeeks, parseWorkoutExport, type LegendEntry, type MarkDef, type Weekday } from './model.js';
+import { WEEKDAYS, exportWeeks, formatSeconds, parseSeconds, parseWorkoutExport, type LegendEntry, type MarkDef, type SessionSettings, type Weekday } from './model.js';
 import type { WorkoutService } from './service.js';
 
 function section(title: string, ...children: (HTMLElement | null)[]): HTMLElement {
@@ -37,6 +37,30 @@ export function renderWorkoutSettings(service: WorkoutService, ctx: ToolContext)
     h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Unit'), unit),
     h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Sets per new exercise'), sets),
     h('div', { class: 'field-col' }, h('span', { class: 'field-label' }, 'Training days for new weeks'), h('div', { class: 'chips' }, ...dayBoxes)),
+  );
+
+  // ---- workout mode
+  const sessionField = (key: 'restSec' | 'stepSec' | 'workSec', label: string, hint: string): HTMLElement => {
+    const input = h('input', { type: 'text', class: 'input input-short', inputMode: 'numeric', value: formatSeconds(s.session[key]), dataset: { testid: `setting-${key}` } });
+    input.addEventListener('change', () => {
+      const sec = parseSeconds(input.value);
+      if (sec && sec > 0) {
+        const session: SessionSettings = { ...service.settings.get().session, [key]: sec };
+        void service.updateSettings({ session });
+        input.value = formatSeconds(sec);
+      } else input.value = formatSeconds(service.settings.get().session[key]);
+    });
+    return h('div', { class: 'field' }, h('span', { class: 'field-label' }, label, h('span', { class: 'field-hint' }, hint)), input);
+  };
+  const offer = h('input', { type: 'checkbox', role: 'switch', checked: s.session.offerTimed, dataset: { testid: 'setting-offer-timed' } });
+  offer.addEventListener('change', () => void service.updateSettings({ session: { ...service.settings.get().session, offerTimed: offer.checked } }));
+  const sessionCard = section(
+    'Workout mode',
+    h('p', { class: 'muted' }, 'Typing a set in workout mode starts the rest countdown (through the Timers tool). Times as m:ss or seconds.'),
+    sessionField('restSec', 'Rest between sets', 'e.g. 1:30'),
+    sessionField('stepSec', '+ / − step', 'the +30 s / −30 s buttons'),
+    sessionField('workSec', 'Work time for timed sets', 'default for new timed exercises, e.g. handstands'),
+    h('div', { class: 'list-row' }, h('label', { class: 'list-main' }, h('span', { class: 'list-title' }, 'Offer timed exercises'), h('span', { class: 'list-sub' }, 'After the rest of the exercise before a timed one, ask to start it')), h('label', { class: 'switch' }, offer, h('span', { class: 'switch-track' }))),
   );
 
   // ---- legend
@@ -137,10 +161,10 @@ export function renderWorkoutSettings(service: WorkoutService, ctx: ToolContext)
     if (!file) return;
     try {
       const parsed = parseWorkoutExport(JSON.parse(await file.text()));
-      const r = await service.importWeeks(parsed.weeks, parsed.settings);
+      const r = await service.importWeeks(parsed.weeks, parsed.settings, parsed.remove);
       ctx.toast(
         `Imported ${r.added} new week${r.added === 1 ? '' : 's'}${r.replaced ? `, replaced ${r.replaced}` : ''}` +
-          (r.removed ? `, removed ${r.removed} empty duplicate${r.removed === 1 ? '' : 's'}` : ''),
+          (r.removed ? `, removed ${r.removed} old or empty duplicate${r.removed === 1 ? '' : 's'}` : ''),
       );
     } catch (err) {
       ctx.toast(`Import failed: ${(err as Error).message}`, { durationMs: 6000 });
@@ -179,6 +203,7 @@ export function renderWorkoutSettings(service: WorkoutService, ctx: ToolContext)
     { class: 'stack', dataset: { testid: 'workout-settings' } },
     h('button', { class: 'btn btn-text btn-back', onClick: () => navigate(toolPath('workout')) }, svg(icons.back), 'Back to the log'),
     general,
+    sessionCard,
     legend,
     marks,
     data,
