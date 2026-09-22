@@ -8,6 +8,7 @@ import {
   displayFootnotes,
   formatSet,
   getSet,
+  hasLink,
   isoWeek,
   mondayOf,
   moveExercise,
@@ -21,7 +22,10 @@ import {
   setDayDate,
   setDayWeekday,
   sortWeeks,
+  splitLinks,
+  toTypedCell,
   toggleRef,
+  typeSet,
   updateDay,
   updateExercise,
   updateExerciseDayStyle,
@@ -247,4 +251,48 @@ test('import validation', () => {
   const ok = parseWorkoutExport({ format: 'multitool-workout', weeks: [{ id: 'x', exercises: [], days: [], startDate: '2026-05-25' }] });
   assert.equal(ok.weeks[0]?.label, 'Week 22');
   assert.deepEqual(ok.weeks[0]?.footnotes, {});
+});
+
+test('typing into a set cell: value, marks, dot references; missing notes are created empty', () => {
+  let w = baseWeek();
+  w = updateSet(w, 'd1', 'squat', 0, { c: 'green' });
+  w = typeSet(w, 'd1', 'squat', 0, '12!..');
+  assert.deepEqual(getSet(w, 'd1', 'squat', 0), { v: '12!', fn: [2], c: 'green' }); // colour kept
+  assert.deepEqual(w.footnotes['squat'], [{ n: 2, text: '' }]); // note 2 created, empty
+  w = typeSet(w, 'd1', 'squat', 1, '8 . ..');
+  assert.deepEqual(getSet(w, 'd1', 'squat', 1).fn, [1, 2]);
+  assert.deepEqual(
+    w.footnotes['squat']?.map((f) => f.n),
+    [2, 1],
+  );
+  assert.equal(nextFootnoteNumber(w, 'squat'), 3);
+  // the typed form round-trips
+  assert.equal(toTypedCell({ v: '12!', fn: [2] }), '12!..');
+  assert.equal(toTypedCell({ v: '8', fn: [1, 2] }), '8 . ..');
+  assert.equal(toTypedCell({ v: '10.5' }), '10.5');
+  assert.equal(toTypedCell({ v: '', fn: [3] }), '...');
+  for (const cell of [{ v: '12!', fn: [2] }, { v: '8', fn: [1, 2] }, { v: '10.5', fn: [1] }, { v: '6+4' }, { v: '', fn: [3] }]) {
+    const back = parseLegacyCell(toTypedCell(cell));
+    assert.deepEqual({ v: back.v, fn: back.fn ?? [] }, { v: cell.v, fn: cell.fn ?? [] });
+  }
+  // clearing the text clears the references too, notes stay
+  w = typeSet(w, 'd1', 'squat', 0, '');
+  assert.deepEqual(getSet(w, 'd1', 'squat', 0), { c: 'green' }); // an empty value is not stored (clean)
+  assert.equal(w.footnotes['squat']?.length, 2);
+});
+
+test('links in text: [label](url) and bare urls', () => {
+  assert.deepEqual(splitLinks('plain text'), [{ text: 'plain text' }]);
+  assert.deepEqual(splitLinks('see [the video](https://youtu.be/abc) later'), [
+    { text: 'see ' },
+    { label: 'the video', url: 'https://youtu.be/abc' },
+    { text: ' later' },
+  ]);
+  assert.deepEqual(splitLinks('https://example.com/a?b=1.'), [{ label: 'example.com/a?b=1', url: 'https://example.com/a?b=1' }, { text: '.' }]);
+  assert.deepEqual(splitLinks('(https://x.io)'), [{ text: '(' }, { label: 'x.io', url: 'https://x.io' }, { text: ')' }]);
+  assert.equal(hasLink('nothing here'), false);
+  assert.equal(hasLink('go https://a.b'), true);
+  const long = `https://example.com/${'x'.repeat(60)}`;
+  const part = splitLinks(long)[0];
+  assert.ok(part && 'label' in part && part.label.length <= 48 && part.url === long);
 });

@@ -41,12 +41,41 @@ function field(label: string, input: HTMLElement): HTMLElement {
   return h('label', { class: 'field-col' }, h('span', { class: 'field-label' }, label), input);
 }
 
-function chip(label: string, active: boolean, onClick: () => void, extraClass = ''): HTMLElement {
+export function chip(label: string, active: boolean, onClick: () => void, extraClass = ''): HTMLElement {
   return h('button', { type: 'button', class: `chip${active ? ' chip-active' : ''}${extraClass ? ` ${extraClass}` : ''}`, onClick }, label);
 }
 
+/**
+ * "+ link" for a text field: inserts `[text](https://…)` at the caret (the
+ * selection becomes the link text) and fires `input` so the field's handler
+ * saves it. Notes render such links as clickable.
+ */
+export function linkChip(field: HTMLInputElement | HTMLTextAreaElement): HTMLElement {
+  return chip('+ link', false, () => {
+    const start = field.selectionStart ?? field.value.length;
+    const end = field.selectionEnd ?? start;
+    const selected = field.value.slice(start, end);
+    const label = selected || 'text';
+    const url = 'https://';
+    const insert = `[${label}](${url})`;
+    field.value = field.value.slice(0, start) + insert + field.value.slice(end);
+    field.focus();
+    // leave the caret where the address goes, or select the placeholder label
+    if (selected) {
+      const at = start + insert.length - 1;
+      field.setSelectionRange(at, at);
+    } else field.setSelectionRange(start + 1, start + 1 + label.length);
+    field.dispatchEvent(new Event('input'));
+  }, 'chip-link');
+}
+
+/** Small hint under note fields. */
+export function linkHint(): HTMLElement {
+  return h('p', { class: 'muted field-hint' }, 'Links: paste a URL, or write [text](https://…).');
+}
+
 /** Colour / star swatches from the legend. `current` is the style being edited. */
-function swatches(service: WorkoutService, current: CellStyle, onPick: (style: CellStyle) => void): HTMLElement {
+export function swatches(service: WorkoutService, current: CellStyle, onPick: (style: CellStyle) => void): HTMLElement {
   const legend = service.settings.get().legend;
   const row = h('div', { class: 'swatches' });
   for (const entry of legend) {
@@ -385,6 +414,7 @@ export function openDayEditor(service: WorkoutService, weekId: string, dayId: st
       field('Marks', marks),
       markChips,
       field('Notes', notes),
+      h('div', { class: 'chips chips-tight' }, linkChip(notes)),
       h(
         'div',
         { class: 'field-col' },
@@ -438,6 +468,8 @@ export function openNotesEditor(service: WorkoutService, weekId: string, dayId: 
     replace(
       sheet.body,
       notes,
+      h('div', { class: 'chips chips-tight' }, linkChip(notes)),
+      linkHint(),
       h('div', { class: 'editor-row' }, h('span', { class: 'editor-label' }, 'Colour'), swatches(service, day.notesStyle ?? {}, (style) => {
         service.update(weekId, (x) => {
           const merged = clean({ ...(x.days.find((d) => d.id === dayId)?.notesStyle ?? {}), ...style });
@@ -578,6 +610,7 @@ export function openWeekEditor(service: WorkoutService, ctx: ToolContext, weekId
       field('Week starts (Monday)', start),
       h('div', { class: 'field-col' }, h('span', { class: 'field-label' }, 'Training days'), h('div', { class: 'chips' }, ...dayBoxes)),
       field('Week notes', notes),
+      h('div', { class: 'chips chips-tight' }, linkChip(notes)),
       h(
         'div',
         { class: 'row row-between sheet-actions' },
@@ -622,6 +655,7 @@ export function openFootnoteEditor(service: WorkoutService, weekId: string, exId
   replace(
     sheet.body,
     text,
+    h('div', { class: 'chips chips-tight' }, linkChip(text)),
     h(
       'div',
       { class: 'row row-between sheet-actions' },

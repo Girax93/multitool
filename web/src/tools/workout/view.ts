@@ -1,21 +1,51 @@
-// Workout log UI: week bar, the spreadsheet-style grid, footnotes and legend.
-// Sub-route "settings" renders the tool's own settings page instead.
+// Workout log UI: the spreadsheet-style grid with inline editing, context
+// menus, notes row and legend. Sub-route "settings" renders the tool's own
+// settings page instead.
 
-import { h, replace, svg } from '../../core/dom.js';
+import { h, replace, svg, type Child } from '../../core/dom.js';
 import type { ToolContext, ToolInstance } from '../../core/registry.js';
 import { currentRoute, navigate, onRouteChange, toolPath } from '../../core/router.js';
 import { icons } from '../../ui/icons.js';
-import { closeAllSheets, openSheet } from '../../ui/sheet.js';
-import { openDayEditor, openExercisesEditor, openFootnoteEditor, openNotesEditor, openSetEditor, openWeekEditor } from './editors.js';
-import { addFootnote, displayFootnotes, isNumbered, legendColor, weekSummary, type CellStyle, type SetCell, type Week, type WorkoutSettings } from './model.js';
+import { closePopover, onContextAction, openPopover } from '../../ui/popover.js';
+import { closeAllSheets, confirmSheet, openSheet } from '../../ui/sheet.js';
+import { chip, openDayEditor, openExercisesEditor, openFootnoteEditor, openNotesEditor, openSetEditor, openWeekEditor, swatches } from './editors.js';
+import { cancelInline, commitInline, editInline, inlineTarget, type CommitVia } from './inline.js';
+import {
+  addFootnote,
+  clean,
+  displayFootnotes,
+  getSet,
+  isNumbered,
+  legendColor,
+  removeFootnote,
+  splitLinks,
+  toTypedCell,
+  typeSet,
+  updateDay,
+  updateExerciseDayStyle,
+  updateFootnote,
+  updateSet,
+  weekSummary,
+  type CellStyle,
+  type SetCell,
+  type Week,
+  type WorkoutSettings,
+} from './model.js';
 import type { ViewPref, WorkoutService } from './service.js';
 import { renderWorkoutSettings } from './settings-view.js';
+
+/** The mounted root, so inline editing can find cells again after a re-render. */
+let root: HTMLElement | null = null;
 
 export function mountWorkoutView(host: HTMLElement, ctx: ToolContext, service: WorkoutService): ToolInstance {
   const unsubs: (() => void)[] = [];
   let sub = '';
   let rendering = false;
   let again = false;
+  // Set when the user moved to another week (tabs, arrows, picker, new week):
+  // the next render scrolls that week into view. Data edits keep the scroll.
+  let navigated = true;
+  root = host;
 
   // Re-entrancy guard: replacing the DOM can fire change/blur handlers that
   // update the service and ask for another render while this one is running.
@@ -26,7 +56,22 @@ export function mountWorkoutView(host: HTMLElement, ctx: ToolContext, service: W
     }
     rendering = true;
     try {
+      commitInline();
+      const before = host.querySelector<HTMLElement>('.wk-scroll');
+      const scroll = before ? { top: before.scrollTop, left: before.scrollLeft } : null;
       replace(host, sub === 'settings' ? renderWorkoutSettings(service, ctx) : renderLog(service, ctx));
+      const after = host.querySelector<HTMLElement>('.wk-scroll');
+      if (after) {
+        if (navigated) {
+          const id = service.currentWeekId.get();
+          const section = id ? after.querySelector<HTMLElement>(`.wk-week[data-week="${CSS.escape(id)}"]`) : null;
+          if (section) after.scrollTop = Math.max(0, section.offsetTop - after.offsetTop - 4);
+          navigated = false;
+        } else if (scroll) {
+          after.scrollTop = scroll.top;
+          after.scrollLeft = scroll.left;
+        }
+      }
     } finally {
       rendering = false;
     }
@@ -40,19 +85,53 @@ export function mountWorkoutView(host: HTMLElement, ctx: ToolContext, service: W
     onRouteChange((r) => {
       if (r.name !== 'tool' || r.toolId !== 'workout') return;
       sub = r.sub;
+      navigated = true;
       render();
     }),
   );
   // Re-render the log whenever data changes (cheap: grids are small).
   unsubs.push(service.weeks.subscribe(() => sub === '' && render(), false));
-  unsubs.push(service.currentWeekId.subscribe(() => sub === '' && render(), false));
+  unsubs.push(
+    service.currentWeekId.subscribe(() => {
+      navigated = true;
+      if (sub === '') render();
+    }, false),
+  );
   unsubs.push(service.settings.subscribe(() => sub === '' && render(), false));
-  unsubs.push(service.view.subscribe(() => sub === '' && render(), false));
+  unsubs.push(
+    service.view.subscribe(() => {
+      navigated = true;
+      if (sub === '') render();
+    }, false),
+  );
+
+  // Clicking another set cell while one is being edited: commit first (which
+  // may re-render the grid), then start editing the cell that was clicked.
+  host.addEventListener(
+    'pointerdown',
+    (e: Event) => {
+      const cur = inlineTarget();
+      if (!cur) return;
+      const target = e.target as HTMLElement | null;
+      if (!target || cur.contains(target)) return;
+      const td = target.closest<HTMLElement>('td.wk-cell[data-set]');
+      const weekId = td?.closest<HTMLElement>('.wk-week')?.dataset['week'];
+      if (!td || !weekId) return;
+      e.preventDefault();
+      const pos: SetPos = { dayId: td.dataset['day'] ?? '', exId: td.dataset['ex'] ?? '', index: Number(td.dataset['set']) };
+      commitInline();
+      editSetCell(service, weekId, pos);
+    },
+    true,
+  );
 
   return {
     unmount: () => {
+      cancelInline();
+      closePopover();
       for (const u of unsubs) u();
       closeAllSheets();
+      if (root === host) root = null;
     },
   };
 }
@@ -236,9 +315,256 @@ function applyStyle(el: HTMLElement, settings: WorkoutSettings, ...layers: (Cell
 }
 
 function setContent(cell: SetCell): (Node | string)[] {
-  const out: (Node | string)[] = [cell.v];
+  const out: (Node | string)[] = [cell.v ?? ''];
   if (cell.fn?.length) out.push(h('sup', null, cell.fn.join(',')));
   return out;
+}
+
+/** Note text with `[label](url)` and bare URLs as links (opened through the native bridge on Android). */
+function rich(text: string, ctx: ToolContext): Child[] {
+  return splitLinks(text).map((part) =>
+    'url' in part
+      ? h(
+          'a',
+          {
+            class: 'link wk-link',
+            href: part.url,
+            target: '_blank',
+            rel: 'noopener',
+            title: part.url,
+            onClick: (e: Event) => {
+              e.preventDefault();
+              e.stopPropagation();
+              ctx.native.openUrl(part.url);
+            },
+          },
+          part.label,
+        )
+      : part.text,
+  );
+}
+
+// ---- Inline editing --------------------------------------------------------------
+
+interface SetPos {
+  dayId: string;
+  exId: string;
+  index: number;
+}
+
+function findSetCell(weekId: string, pos: SetPos): HTMLElement | null {
+  if (!root) return null;
+  const week = root.querySelector<HTMLElement>(`.wk-week[data-week="${CSS.escape(weekId)}"]`);
+  return week?.querySelector<HTMLElement>(`td.wk-cell[data-day="${CSS.escape(pos.dayId)}"][data-ex="${CSS.escape(pos.exId)}"][data-set="${pos.index}"]`) ?? null;
+}
+
+/** All set positions of a day in grid order (for Enter / Tab to move on). */
+function setPositions(week: Week, dayId: string): SetPos[] {
+  const out: SetPos[] = [];
+  for (const ex of week.exercises) for (let i = 0; i < ex.sets; i++) out.push({ dayId, exId: ex.id, index: i });
+  return out;
+}
+
+function neighbourSet(week: Week, pos: SetPos, dir: -1 | 1): SetPos | undefined {
+  const list = setPositions(week, pos.dayId);
+  const i = list.findIndex((p) => p.exId === pos.exId && p.index === pos.index);
+  return i < 0 ? undefined : list[i + dir];
+}
+
+/** Type straight into a set cell; Enter / Tab go to the next set of the day. */
+function editSetCell(service: WorkoutService, weekId: string, pos: SetPos): void {
+  const td = findSetCell(weekId, pos);
+  const w = service.get(weekId);
+  if (!td || !w) return;
+  const before = toTypedCell(getSet(w, pos.dayId, pos.exId, pos.index));
+  editInline(td, {
+    value: before,
+    mode: 'overlay',
+    mono: true,
+    testid: 'set-inline',
+    onCommit: (text: string, via: CommitVia) => {
+      if (text.trim() !== before.trim()) service.update(weekId, (x) => typeSet(x, pos.dayId, pos.exId, pos.index, text));
+      const cur = service.get(weekId);
+      if (!cur || via === 'blur') return;
+      const next = neighbourSet(cur, pos, via === 'shift-tab' ? -1 : 1);
+      if (next) editSetCell(service, weekId, next);
+    },
+  });
+}
+
+/** Right-click / long-press menu for a set cell: colour (set / exercise / day), star, marks, clear, full editor. */
+function openSetMenu(x: number, y: number, service: WorkoutService, ctx: ToolContext, weekId: string, pos: SetPos): void {
+  let scope: 'set' | 'exercise' | 'day' = 'set';
+  const pop = openPopover(x, y);
+  const render = (): void => {
+    const w = service.get(weekId);
+    const day = w?.days.find((d) => d.id === pos.dayId);
+    const ex = w?.exercises.find((e) => e.id === pos.exId);
+    if (!w || !day || !ex) {
+      pop.close();
+      return;
+    }
+    const cell = getSet(w, day.id, ex.id, pos.index);
+    const exDay = day.cells[ex.id];
+    const styleFor = (): CellStyle => (scope === 'set' ? cell : scope === 'exercise' ? (exDay ?? {}) : day);
+    const applyStyle = (style: CellStyle): void => {
+      service.update(weekId, (x) => {
+        if (scope === 'set') return updateSet(x, day.id, ex.id, pos.index, style);
+        if (scope === 'exercise') return updateExerciseDayStyle(x, day.id, ex.id, style);
+        return updateDay(x, day.id, style);
+      });
+      render();
+    };
+    const seg = (s: typeof scope, label: string): HTMLElement =>
+      h(
+        'button',
+        {
+          type: 'button',
+          class: `seg${scope === s ? ' seg-active' : ''}`,
+          onClick: () => {
+            scope = s;
+            render();
+          },
+        },
+        label,
+      );
+    const marks = service.settings.get().marks;
+    replace(
+      pop.el,
+      h(
+        'div',
+        { class: 'pop-row' },
+        h('span', { class: 'pop-label' }, 'Colour'),
+        h('div', { class: 'segmented segmented-xs' }, seg('set', 'Set'), seg('exercise', ex.name.split(' ')[0] || 'Exercise'), seg('day', day.weekday)),
+      ),
+      swatches(service, styleFor(), applyStyle),
+      h(
+        'div',
+        { class: 'pop-row' },
+        h('span', { class: 'pop-label' }, 'Marks'),
+        h(
+          'div',
+          { class: 'chips chips-tight' },
+          ...marks.map((m) =>
+            chip(m.symbol, (cell.v ?? '').endsWith(m.symbol), () => {
+              const v = cell.v ?? '';
+              const nv = v.endsWith(m.symbol) ? v.slice(0, -m.symbol.length) : v + m.symbol;
+              service.update(weekId, (x) => updateSet(x, day.id, ex.id, pos.index, { v: nv }));
+              render();
+            }, 'chip-mark'),
+          ),
+        ),
+      ),
+      h(
+        'div',
+        { class: 'pop-actions' },
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn btn-sm btn-text',
+            onClick: () => {
+              service.update(weekId, (x) => updateSet(x, day.id, ex.id, pos.index, { v: '', fn: [], c: undefined, star: false }));
+              pop.close();
+            },
+          },
+          'Clear',
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn btn-sm',
+            dataset: { testid: 'menu-set-editor' },
+            onClick: () => {
+              pop.close();
+              openSetEditor(service, ctx, weekId, pos);
+            },
+          },
+          'Edit in sheet…',
+        ),
+      ),
+    );
+  };
+  render();
+}
+
+/** Menu for a notes cell (day notes) — colour and the sheet editor. */
+function openNotesMenu(x: number, y: number, service: WorkoutService, weekId: string, dayId: string): void {
+  const pop = openPopover(x, y);
+  const render = (): void => {
+    const w = service.get(weekId);
+    const day = w?.days.find((d) => d.id === dayId);
+    if (!w || !day) {
+      pop.close();
+      return;
+    }
+    replace(
+      pop.el,
+      h('div', { class: 'pop-row' }, h('span', { class: 'pop-label' }, 'Colour')),
+      swatches(service, day.notesStyle ?? {}, (style) => {
+        service.update(weekId, (x) => {
+          const merged = clean({ ...(x.days.find((d) => d.id === dayId)?.notesStyle ?? {}), ...style });
+          return updateDay(x, dayId, { notesStyle: Object.keys(merged).length ? merged : undefined });
+        });
+        render();
+      }),
+      h(
+        'div',
+        { class: 'pop-actions' },
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn btn-sm',
+            onClick: () => {
+              pop.close();
+              openNotesEditor(service, weekId, dayId);
+            },
+          },
+          'Edit in sheet…',
+        ),
+      ),
+    );
+  };
+  render();
+}
+
+function openFootnoteMenu(x: number, y: number, service: WorkoutService, weekId: string, exId: string, n: number): void {
+  const pop = openPopover(x, y);
+  replace(
+    pop.el,
+    h(
+      'div',
+      { class: 'pop-actions' },
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn btn-sm btn-text btn-danger-text',
+          onClick: async () => {
+            pop.close();
+            if (await confirmSheet(n > 0 ? 'Delete this note? References to it are removed from the sets.' : 'Delete this note?', 'Delete note')) {
+              service.update(weekId, (x) => removeFootnote(x, exId, n));
+            }
+          },
+        },
+        'Delete',
+      ),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn btn-sm',
+          onClick: () => {
+            pop.close();
+            openFootnoteEditor(service, weekId, exId, n);
+          },
+        },
+        'Edit in sheet…',
+      ),
+    ),
+  );
 }
 
 function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, settings: WorkoutSettings): HTMLElement {
@@ -306,7 +632,7 @@ function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, setti
           'button',
           { class: 'wk-cbtn wk-cbtn-alt', title: 'Another workout — tap to edit the day', onClick: () => openDayEditor(service, week.id, day.id) },
           svg(icons.dumbbell, 'icon icon-sm'),
-          h('span', null, day.alt.trim()),
+          h('span', null, ...rich(day.alt.trim(), ctx)),
         ),
       );
       applyStyle(td, settings, day);
@@ -316,21 +642,41 @@ function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, setti
         const ed = day.cells[ex.id];
         for (let i = 0; i < ex.sets; i++) {
           const cell = ed?.sets[i] ?? { v: '' };
+          const pos: SetPos = { dayId: day.id, exId: ex.id, index: i };
           const td = h(
             'td',
             { class: `wk-cell${i === 0 ? ' wk-cell-first' : ''}${i === ex.sets - 1 ? ' wk-cell-last' : ''}`, dataset: { day: day.id, ex: ex.id, set: String(i) } },
-            h('button', { class: 'wk-cbtn', onClick: () => openSetEditor(service, ctx, week.id, { dayId: day.id, exId: ex.id, index: i }) }, ...setContent(cell)),
+            h('button', { class: 'wk-cbtn', title: 'Type reps and marks; . .. … add notes; right-click or hold for colours', onClick: () => editSetCell(service, week.id, pos) }, ...setContent(cell)),
           );
+          onContextAction(td, (x, y) => openSetMenu(x, y, service, ctx, week.id, pos));
           applyStyle(td, settings, cell, ed, day);
           tr.appendChild(td);
         }
       }
     }
-    const notesTd = h(
-      'td',
-      { class: 'wk-notes' },
-      h('button', { class: 'wk-cbtn wk-cbtn-notes', dataset: { testid: 'notes-cell' }, onClick: () => openNotesEditor(service, week.id, day.id) }, day.notes ?? ''),
+    const notesTd = h('td', { class: 'wk-notes' });
+    notesTd.appendChild(
+      h(
+        'button',
+        {
+          class: 'wk-cbtn wk-cbtn-notes',
+          dataset: { testid: 'notes-cell' },
+          onClick: () =>
+            editInline(notesTd, {
+              value: day.notes ?? '',
+              mode: 'overlay',
+              multiline: true,
+              placeholder: 'Notes for this day',
+              testid: 'notes-inline',
+              onCommit: (text) => {
+                if (text.trim() !== (day.notes ?? '').trim()) service.update(week.id, (x) => updateDay(x, day.id, { notes: text.trim() }));
+              },
+            }),
+        },
+        ...rich(day.notes ?? '', ctx),
+      ),
     );
+    onContextAction(notesTd, (x, y) => openNotesMenu(x, y, service, week.id, day.id));
     applyStyle(notesTd, settings, day.notesStyle, day);
     tr.appendChild(notesTd);
     body.appendChild(tr);
@@ -347,7 +693,7 @@ function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, setti
  * The notes row under the grid, like the footnote row of the original sheet:
  * each exercise's notes sit under its own columns (numbered ones first, then
  * plain notes added with +), the week's note under the Notes column, and the
- * week menu in the bottom-right corner.
+ * week menu in the bottom-right corner. Notes are edited in place.
  */
 function renderNotesRow(service: WorkoutService, ctx: ToolContext, week: Week): HTMLElement {
   const tr = h('tr', { class: 'wk-fnrow', dataset: { testid: 'footnotes' } });
@@ -360,15 +706,29 @@ function renderNotesRow(service: WorkoutService, ctx: ToolContext, week: Week): 
       h(
         'div',
         { class: 'wk-fnwrap' },
-        ...notes.map((f) =>
-          h(
+        ...notes.map((f) => {
+          const btn = h(
             'button',
-            { class: `wk-fn${isNumbered(f) ? '' : ' wk-fn-plain'}`, title: 'Edit note', onClick: () => openFootnoteEditor(service, week.id, ex.id, f.n) },
+            { class: `wk-fn${isNumbered(f) ? '' : ' wk-fn-plain'}${f.text.trim() ? '' : ' wk-fn-empty'}`, title: 'Tap to edit, right-click or hold for more', dataset: { note: String(f.n) } },
             isNumbered(f) ? h('sup', null, String(f.n)) : null,
             isNumbered(f) ? ' ' : null,
-            f.text,
-          ),
-        ),
+            ...(f.text.trim() ? rich(f.text, ctx) : ['write the note…']),
+          );
+          btn.addEventListener('click', () =>
+            editInline(btn, {
+              value: f.text,
+              mode: 'inplace',
+              multiline: true,
+              placeholder: isNumbered(f) ? `Note ${f.n} for ${ex.name}` : `Note for ${ex.name}`,
+              testid: 'footnote-inline',
+              onCommit: (text) => {
+                if (text.trim() !== f.text.trim()) service.update(week.id, (x) => updateFootnote(x, ex.id, f.n, text.trim()));
+              },
+            }),
+          );
+          onContextAction(btn, (x, y) => openFootnoteMenu(x, y, service, week.id, ex.id, f.n));
+          return btn;
+        }),
         h(
           'button',
           { class: 'wk-fn-add', 'aria-label': `Add a note for ${ex.name}`, title: 'Add a note (without a number)', dataset: { testid: 'footnote-add' }, onClick: () => openAddNoteSheet(service, week.id, ex.id) },
@@ -378,22 +738,37 @@ function renderNotesRow(service: WorkoutService, ctx: ToolContext, week: Week): 
     );
     tr.appendChild(cell);
   }
-  tr.appendChild(
+  const last = h('td', { class: 'wk-notes wk-fncell wk-fnlast' });
+  last.appendChild(
     h(
-      'td',
-      { class: 'wk-notes wk-fncell wk-fnlast' },
-      h(
-        'button',
-        { class: 'wk-cbtn wk-cbtn-notes', dataset: { testid: 'week-notes' }, title: 'Notes for the whole week', onClick: () => openWeekEditor(service, ctx, week.id) },
-        week.notes ?? '',
-      ),
-      h(
-        'button',
-        { class: 'iconbtn iconbtn-sm wk-corner-menu', 'aria-label': 'Week menu', title: 'Week menu', dataset: { testid: 'week-menu-corner' }, onClick: () => openWeekMenu(service, ctx, week.id) },
-        svg(icons.more),
-      ),
+      'button',
+      {
+        class: 'wk-cbtn wk-cbtn-notes',
+        dataset: { testid: 'week-notes' },
+        title: 'Notes for the whole week — tap to edit',
+        onClick: () =>
+          editInline(last, {
+            value: week.notes ?? '',
+            mode: 'overlay',
+            multiline: true,
+            placeholder: 'Notes for the whole week',
+            testid: 'week-notes-inline',
+            onCommit: (text) => {
+              if (text.trim() !== (week.notes ?? '').trim()) service.update(week.id, (x) => clean({ ...x, notes: text.trim() }));
+            },
+          }),
+      },
+      ...rich(week.notes ?? '', ctx),
     ),
   );
+  last.appendChild(
+    h(
+      'button',
+      { class: 'iconbtn iconbtn-sm wk-corner-menu', 'aria-label': 'Week menu', title: 'Week menu', dataset: { testid: 'week-menu-corner' }, onClick: () => openWeekMenu(service, ctx, week.id) },
+      svg(icons.more),
+    ),
+  );
+  tr.appendChild(last);
   return h('tfoot', null, tr);
 }
 
@@ -415,7 +790,7 @@ function openAddNoteSheet(service: WorkoutService, weekId: string, exId: string)
         sheet.close();
       },
     },
-    h('p', { class: 'muted' }, 'A general note for this exercise this week — it gets no number. For a note about one set, tap that set and use “+ note” there.'),
+    h('p', { class: 'muted' }, 'A general note for this exercise this week — it gets no number. For a numbered note, type a dot after the set (12. or 12..) and the note appears here to fill in.'),
     input,
     h('div', { class: 'row row-end sheet-actions' }, h('button', { class: 'btn btn-primary', type: 'submit', dataset: { testid: 'footnote-add-save' } }, 'Add')),
   );

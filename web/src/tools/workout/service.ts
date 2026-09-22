@@ -45,8 +45,10 @@ export class WorkoutService {
     if (view) this.view.set({ ...DEFAULT_VIEW, ...view });
     const weeks = sortWeeks(entries.map((e) => e.value));
     this.weeks.set(weeks);
-    const last = weeks[weeks.length - 1];
-    this.currentWeekId.set(current && weeks.some((w) => w.id === current) ? current : (last?.id ?? null));
+    // Always open on the newest week (Ari: "take me to the most recent week");
+    // the stored selection only survives within a session.
+    void current;
+    this.currentWeekId.set(weeks[weeks.length - 1]?.id ?? null);
     this.updateStatus();
     this.ctx.kv.watch('', (keys) => void this.applyRemote(keys));
   }

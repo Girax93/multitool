@@ -401,6 +401,37 @@ export function nextFootnoteNumber(week: Week, exId: string): number {
   return footnotesFor(week, exId).reduce((m, f) => Math.max(m, f.n), 0) + 1;
 }
 
+/** Make sure numbered note `n` exists for the exercise (created empty when a set refers to it before it was written). */
+export function ensureFootnote(week: Week, exId: string, n: number): Week {
+  if (n <= 0 || footnotesFor(week, exId).some((f) => f.n === n)) return week;
+  return { ...week, footnotes: { ...week.footnotes, [exId]: [...footnotesFor(week, exId), { n, text: '' }] } };
+}
+
+/**
+ * What a set cell looks like when typed: the value with its note references
+ * as dot runs, the way the original sheet did it ("12!" + notes 1 and 2 →
+ * "12! . .."), so `parseLegacyCell` reads it back unchanged.
+ */
+export function toTypedCell(cell: SetCell): string {
+  const runs = (cell.fn ?? []).map((n) => '.'.repeat(n));
+  if (runs.length === 0) return cell.v;
+  if (runs.length === 1) return cell.v + runs[0];
+  return `${cell.v} ${runs.join(' ')}`.trim();
+}
+
+/**
+ * Apply what was typed straight into a set cell: reps, marks (`!`, `*`, `(x)` …)
+ * and dot runs for note references. Notes referred to for the first time are
+ * created empty so they can be written in the notes row. Colour and star stay.
+ */
+export function typeSet(week: Week, dayId: string, exId: string, index: number, text: string): Week {
+  const parsed = parseLegacyCell(text);
+  const prev = getSet(week, dayId, exId, index);
+  let w = updateSet(week, dayId, exId, index, { v: parsed.v, fn: parsed.fn ?? [], star: parsed.star || prev.star });
+  for (const n of parsed.fn ?? []) w = ensureFootnote(w, exId, n);
+  return w;
+}
+
 /**
  * Add a note for an exercise this week. Numbered notes get the next free
  * number (numbers are never reused); plain notes get the next free negative
@@ -470,7 +501,7 @@ export function parseLegacyCell(text: string): SetCell {
   });
   const v = s.replace(/\s+/g, ' ').trim();
   const fn = [...new Set(refs)].sort((a, b) => a - b);
-  return clean({ v, fn, star });
+  return { v, ...clean({ fn, star }) };
 }
 
 /** A day counts as trained when a set was logged or another workout was done instead. */
@@ -515,4 +546,42 @@ export function parseWorkoutExport(data: unknown): WorkoutExport {
     w.createdAt ??= Date.now();
   }
   return { format: 'multitool-workout', version: 1, exportedAt: d.exportedAt ?? '', weeks: d.weeks, settings: d.settings };
+}
+
+// ---- Links in free text ------------------------------------------------------
+
+export type TextPart = { text: string } | { label: string; url: string };
+
+const LINK_RE = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>"']+)/g;
+
+/**
+ * Split note text into plain runs and links: `[label](https://…)` or a bare
+ * `https://…` URL. Trailing punctuation after a bare URL stays text.
+ */
+export function splitLinks(text: string): TextPart[] {
+  const out: TextPart[] = [];
+  let last = 0;
+  for (const m of text.matchAll(LINK_RE)) {
+    const start = m.index ?? 0;
+    let raw = m[0];
+    let label = m[1];
+    let url = m[2] ?? m[3] ?? '';
+    if (!label) {
+      // bare URL: drop closing punctuation that is almost never part of it
+      const trimmed = url.replace(/[.,;:!?)\]]+$/, '');
+      raw = raw.slice(0, raw.length - (url.length - trimmed.length));
+      url = trimmed;
+      label = url.replace(/^https?:\/\//, '');
+      if (label.length > 48) label = `${label.slice(0, 45)}…`;
+    }
+    if (start > last) out.push({ text: text.slice(last, start) });
+    out.push({ label, url });
+    last = start + raw.length;
+  }
+  if (last < text.length) out.push({ text: text.slice(last) });
+  return out;
+}
+
+export function hasLink(text: string | undefined): boolean {
+  return !!text && splitLinks(text).some((p) => 'url' in p);
 }

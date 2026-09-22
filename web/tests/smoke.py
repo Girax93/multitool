@@ -155,40 +155,63 @@ def main() -> int:
             assert grid.locator("tbody tr").count() == 3, "expected Mon/Wed/Fri rows"
             assert grid.locator("[data-testid='exercise-header']").count() == 2
 
-            # log Mon: 8, 8, 8 for squats then 12 with a mark and a note for rows
+            # log Mon by typing straight into the cells: 8, 8, 8 for squats, then "12!." for rows
+            # (a mark, and a dot = note 1, created empty to be written in the notes row)
             grid.locator("td.wk-cell").nth(0).locator("button").click()
-            expect(page.locator("[data-testid='set-input']")).to_be_visible()
+            expect(page.locator("[data-testid='set-inline']")).to_be_focused()
             for reps in ("8", "8", "8"):
-                page.fill("[data-testid='set-input']", reps)
-                page.click("[data-testid='set-next']")
-            page.fill("[data-testid='set-input']", "12")
-            page.locator(".chip-mark", has_text="!").first.click()
-            expect(page.locator("[data-testid='set-input']")).to_have_value("12!")
-            page.locator(".chip", has_text="+ note").click()
-            page.fill("[data-testid='note-input']", "22kg")
-            page.click("[data-testid='note-save']")
-            page.screenshot(path=str(SHOTS / "09-workout-set-editor.png"))
-            page.locator(".sheet-panel button", has_text="Done").click()
-            expect(page.locator(".sheet-panel")).to_have_count(0)
+                page.fill("[data-testid='set-inline']", reps)
+                page.keyboard.press("Enter")
+            expect(page.locator("[data-testid='set-inline']")).to_have_count(1)  # moved on to rows set 1
+            page.fill("[data-testid='set-inline']", "12!.")
+            page.keyboard.press("Escape")  # Escape after typing: the text is dropped …
             first_row = grid.locator("tbody tr").nth(0)
+            expect(first_row.locator("td.wk-cell").nth(3)).to_have_text("")
+            first_row.locator("td.wk-cell").nth(3).locator("button").click()
+            page.fill("[data-testid='set-inline']", "12!.")
+            page.keyboard.press("Tab")  # … Tab commits and moves on
             expect(first_row.locator("td.wk-cell").nth(0)).to_have_text("8")
             expect(first_row.locator("td.wk-cell").nth(3)).to_have_text("12!1")
+            page.keyboard.press("Escape")
+            expect(page.locator("[data-testid='set-inline']")).to_have_count(0)
+            # the empty note 1 for rows is there; write it in place
+            rows_note = page.locator("[data-testid='footnotes'] td.wk-fncell").nth(1).locator(".wk-fn[data-note='1']")
+            expect(rows_note).to_have_class(re.compile(r"wk-fn-empty"))
+            rows_note.click()
+            page.fill("[data-testid='footnote-inline']", "22kg")
+            page.keyboard.press("Enter")
             expect(page.locator("[data-testid='footnotes']")).to_contain_text("22kg")
-
-            # colour one set green, star another, tint a whole day
-            first_row.locator("td.wk-cell").nth(0).locator("button").click()
-            page.locator(".sheet-panel .swatch").nth(1).click()  # green
-            page.locator(".sheet-panel button", has_text="Done").click()
-            expect(page.locator(".sheet-panel")).to_have_count(0)
-            expect(first_row.locator("td.wk-cell").nth(0)).to_have_class(re.compile(r"wk-tinted"))
+            # clicking another cell while editing commits and moves the editor there
             first_row.locator("td.wk-cell").nth(1).locator("button").click()
-            page.locator(".sheet-panel .swatch-star").first.click()
-            page.locator(".seg", has_text="Day").click()
-            page.locator(".sheet-panel .swatch").nth(4).click()  # gold, whole day
-            page.locator(".sheet-panel button", has_text="Done").click()
-            expect(page.locator(".sheet-panel")).to_have_count(0)
+            page.fill("[data-testid='set-inline']", "9")
+            first_row.locator("td.wk-cell").nth(2).locator("button").click()
+            expect(first_row.locator("td.wk-cell").nth(1)).to_have_text("9")
+            expect(page.locator("[data-testid='set-inline']")).to_have_count(1)
+            page.fill("[data-testid='set-inline']", "8")
+            page.keyboard.press("Enter")
+            page.keyboard.press("Escape")
+            expect(first_row.locator("td.wk-cell").nth(2)).to_have_text("8")
+
+            # right-click menu: colour one set green, star another, tint a whole day, open the full editor
+            first_row.locator("td.wk-cell").nth(0).click(button="right")
+            expect(page.locator("[data-testid='popover']")).to_be_visible()
+            page.locator("[data-testid='popover'] .swatch").nth(1).click()  # green
+            expect(first_row.locator("td.wk-cell").nth(0)).to_have_class(re.compile(r"wk-tinted"))
+            page.keyboard.press("Escape")
+            expect(page.locator("[data-testid='popover']")).to_have_count(0)
+            first_row.locator("td.wk-cell").nth(1).click(button="right")
+            page.locator("[data-testid='popover'] .swatch-star").first.click()
+            page.locator("[data-testid='popover'] .seg", has_text="Mon").click()
+            page.locator("[data-testid='popover'] .swatch").nth(4).click()  # gold, whole day
             assert first_row.locator("td.wk-cell").nth(1).locator(".wk-star").count() == 1
             expect(first_row.locator("th")).to_have_class(re.compile(r"wk-tinted"))
+            page.locator("[data-testid='popover'] .chip-mark", has_text="!").first.click()  # mark from the menu
+            expect(first_row.locator("td.wk-cell").nth(1)).to_have_text("9!")
+            page.screenshot(path=str(SHOTS / "09-workout-cell-menu.png"))
+            page.click("[data-testid='menu-set-editor']")
+            expect(page.locator("[data-testid='set-input']")).to_have_value("9!")
+            page.locator(".sheet-panel button", has_text="Done").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
 
             # bodyweight via the day header
             first_row.locator("[data-testid='day-header']").click()
