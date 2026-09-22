@@ -10,6 +10,7 @@ Exit code != 0 on any failure. Run after `node scripts/build-web.mjs`.
 """
 import argparse
 import datetime
+import json
 import pathlib
 import re
 import subprocess
@@ -303,8 +304,37 @@ def main() -> int:
             page.click("[data-testid='menu-settings']")
             expect(page.locator("[data-testid='workout-settings']")).to_be_visible()
             page.screenshot(path=str(SHOTS / "11-workout-settings.png"))
+
+            # importing a week whose label an empty, hand-made week already carries replaces that week
             page.go_back()
             expect(page.locator("[data-testid='workout-grid']")).to_be_visible()
+            dup_label = page.locator("[data-testid='week-label'] .wk-label-title").inner_text().strip()
+            dup_start = page.locator("[data-testid='week-label'] .wk-corner-date").inner_text().strip()
+            import_file = SHOTS / "dup-import.json"
+            import_file.write_text(json.dumps({
+                "format": "multitool-workout", "version": 1,
+                "weeks": [{"id": "import-dup", "label": dup_label, "startDate": dup_start, "createdAt": 1,
+                           "exercises": [{"id": "squat", "name": "Pistol Squats", "weight": "", "sets": 3},
+                                         {"id": "rows", "name": "Rows", "weight": "20kg", "sets": 3}],
+                           "days": [{"id": "import-dup-mon", "weekday": "Mon", "date": dup_start,
+                                     "cells": {"squat": {"sets": [{"v": "6"}, {"v": "6"}, {"v": "6"}]},
+                                               "rows": {"sets": [{"v": "12"}, {"v": "12"}, {"v": "10"}]}}}],
+                           "footnotes": {}}],
+            }))
+            page.goto(base + "#/t/workout/settings", wait_until="networkidle")
+            page.set_input_files("[data-testid='workout-import-file']", str(import_file))
+            expect(page.locator(".toast")).to_contain_text("removed 1 empty duplicate", timeout=10_000)
+            page.goto(base + "#/t/workout", wait_until="networkidle")
+            page.click("[data-testid='view-all']")
+            expect(page.locator("[data-testid='workout-grid']")).to_have_count(3)  # the empty third week was replaced, not added to
+            assert page.locator("[data-testid='week-label'] .wk-label-title").all_inner_texts().count(dup_label) == 1
+            page.click("[data-testid='view-one']")
+            # a new week after the import counts on from the highest number
+            page.click("[data-testid='week-menu']")
+            page.click("[data-testid='menu-new-week']")
+            m = re.search(r"(\d+)\s*$", dup_label)
+            if m:
+                expect(page.locator("[data-testid='week-label'] .wk-label-title")).to_have_text(dup_label[: m.start(1)] + str(int(m.group(1)) + 1))
 
             # light theme render
             light = browser.new_context(viewport=PHONE, color_scheme="light")

@@ -231,6 +231,44 @@ export function nextWeekLabel(previousLabel: string | undefined, startDate: stri
   return defaultWeekLabel(startDate);
 }
 
+/**
+ * The label for a week added after `weeks`: one more than the highest number
+ * any existing label ends with ("Week 80" → "Week 81"), so a gap week without
+ * a number, or a week that was added twice, never produces a duplicate label.
+ * Undefined when no label is numbered (newWeek then picks its default).
+ */
+export function nextWeekLabelFrom(weeks: Week[]): string | undefined {
+  let best: { prefix: string; n: number } | null = null;
+  for (const w of weeks) {
+    const m = /^(.*?)(\d+)\s*$/.exec(w.label.trim());
+    if (m && m[2]) {
+      const n = parseInt(m[2], 10);
+      if (!best || n > best.n) best = { prefix: m[1] ?? '', n };
+    }
+  }
+  return best ? `${best.prefix}${best.n + 1}` : undefined;
+}
+
+/** True when anything was logged: a set, another workout, notes, marks, bodyweight, a note in the notes row or a week note. */
+export function weekHasContent(week: Week): boolean {
+  if (week.notes?.trim()) return true;
+  if (Object.values(week.footnotes).some((list) => list.some((f) => f.text.trim() !== ''))) return true;
+  return week.days.some(
+    (d) => dayTrained(d) || !!d.notes?.trim() || !!d.marks?.trim() || d.bodyweight !== undefined || !!d.c || !!d.star,
+  );
+}
+
+/**
+ * Weeks that only duplicate one of `keep` (same label, not in `keep`, nothing
+ * logged) — e.g. a "Week 38" started by hand on two devices before the real
+ * Week 38 was imported.
+ */
+export function emptyDuplicateWeeks(weeks: Week[], keep: Week[]): Week[] {
+  const keepIds = new Set(keep.map((w) => w.id));
+  const labels = new Set(keep.map((w) => w.label.trim().toLowerCase()));
+  return weeks.filter((w) => !keepIds.has(w.id) && labels.has(w.label.trim().toLowerCase()) && !weekHasContent(w));
+}
+
 /** Weeks sorted oldest → newest. */
 export function sortWeeks(weeks: Week[]): Week[] {
   return [...weeks].sort((a, b) => {

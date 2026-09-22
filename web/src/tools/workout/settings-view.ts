@@ -138,7 +138,10 @@ export function renderWorkoutSettings(service: WorkoutService, ctx: ToolContext)
     try {
       const parsed = parseWorkoutExport(JSON.parse(await file.text()));
       const r = await service.importWeeks(parsed.weeks, parsed.settings);
-      ctx.toast(`Imported ${r.added} new week${r.added === 1 ? '' : 's'}${r.replaced ? `, replaced ${r.replaced}` : ''}`);
+      ctx.toast(
+        `Imported ${r.added} new week${r.added === 1 ? '' : 's'}${r.replaced ? `, replaced ${r.replaced}` : ''}` +
+          (r.removed ? `, removed ${r.removed} empty duplicate${r.removed === 1 ? '' : 's'}` : ''),
+      );
     } catch (err) {
       ctx.toast(`Import failed: ${(err as Error).message}`, { durationMs: 6000 });
     }

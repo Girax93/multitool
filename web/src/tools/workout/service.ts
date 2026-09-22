@@ -6,7 +6,9 @@ import type { ToolContext } from '../../core/registry.js';
 import { signal, type Signal } from '../../core/store.js';
 import {
   DEFAULT_SETTINGS,
+  emptyDuplicateWeeks,
   newWeek,
+  nextWeekLabelFrom,
   sortWeeks,
   type Week,
   type WorkoutSettings,
@@ -121,7 +123,8 @@ export class WorkoutService {
       settings,
       previous,
       startDate: opts.startDate,
-      label: opts.label,
+      // Count on from the highest numbered label, not the last week's (which may be a gap week).
+      label: opts.label ?? nextWeekLabelFrom(list),
     });
     this.weeks.set(sortWeeks([...list, week]));
     void this.ctx.kv.set(WEEK_PREFIX + week.id, week);
@@ -144,8 +147,12 @@ export class WorkoutService {
     await this.ctx.kv.set(SETTINGS_KEY, next);
   }
 
-  /** Merge imported weeks (same id → replaced). Returns how many were added/replaced. */
-  async importWeeks(weeks: Week[], settings?: WorkoutSettings): Promise<{ added: number; replaced: number }> {
+  /**
+   * Merge imported weeks (same id → replaced). Empty weeks that only duplicate
+   * an imported week's label (a "Week 38" started by hand before the real one
+   * arrived) are removed. Returns how many were added / replaced / removed.
+   */
+  async importWeeks(weeks: Week[], settings?: WorkoutSettings): Promise<{ added: number; replaced: number; removed: number }> {
     const byId = new Map(this.weeks.get().map((w) => [w.id, w]));
     let added = 0;
     let replaced = 0;
@@ -155,13 +162,18 @@ export class WorkoutService {
       byId.set(w.id, w);
       await this.ctx.kv.set(WEEK_PREFIX + w.id, w);
     }
+    const duplicates = emptyDuplicateWeeks([...byId.values()], weeks);
+    for (const d of duplicates) {
+      byId.delete(d.id);
+      await this.ctx.kv.delete(WEEK_PREFIX + d.id);
+    }
     this.weeks.set(sortWeeks([...byId.values()]));
     if (settings) await this.updateSettings(settings);
     // Land on the newest week after an import (the imported history usually ends there).
     const last = this.weeks.get()[this.weeks.get().length - 1];
     if (last) this.select(last.id);
     this.updateStatus();
-    return { added, replaced };
+    return { added, replaced, removed: duplicates.length };
   }
 
   private updateStatus(): void {

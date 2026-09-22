@@ -6,14 +6,17 @@ import {
   addExercise,
   addFootnote,
   displayFootnotes,
+  emptyDuplicateWeeks,
   formatSet,
   getSet,
   hasLink,
   isoWeek,
   mondayOf,
   moveExercise,
+  newDay,
   newWeek,
   nextFootnoteNumber,
+  nextWeekLabelFrom,
   numberedFootnotes,
   parseLegacyCell,
   parseWorkoutExport,
@@ -31,6 +34,7 @@ import {
   updateExerciseDayStyle,
   updateFootnote,
   updateSet,
+  weekHasContent,
   weekSummary,
   weekdayOfDate,
   type Week,
@@ -295,4 +299,36 @@ test('links in text: [label](url) and bare urls', () => {
   const long = `https://example.com/${'x'.repeat(60)}`;
   const part = splitLinks(long)[0];
   assert.ok(part && 'label' in part && part.label.length <= 48 && part.url === long);
+});
+
+test('empty duplicate weeks are found; anything logged keeps a week', () => {
+  const real = { ...baseWeek(), id: 'import-week38', label: 'Week 38' };
+  const rogue1 = { ...newWeek({ id: 'wk_a', dayIds: [], now: NOW, settings: DEFAULT_SETTINGS, startDate: '2025-10-20' }), label: 'Week 38' };
+  const rogue2 = { ...rogue1, id: 'wk_b', label: 'week 38 ' };
+  const other = { ...rogue1, id: 'wk_c', label: 'Week 39' };
+  assert.equal(weekHasContent(rogue1), false);
+  assert.deepEqual(
+    emptyDuplicateWeeks([real, rogue1, rogue2, other], [real]).map((w) => w.id),
+    ['wk_a', 'wk_b'],
+  );
+  // a set, a note, a bodyweight or a week note → not empty
+  let typed = { ...rogue1, id: 'wk_t', days: [newDay('t1', 'Mon', '2025-10-20', [])] };
+  assert.equal(weekHasContent(typed), false);
+  typed = { ...typed, days: [{ ...typed.days[0]!, notes: 'hi' }] };
+  assert.equal(weekHasContent(typed), true);
+  typed = { ...typed, days: [{ ...typed.days[0]!, notes: undefined, bodyweight: 90 }] };
+  assert.equal(weekHasContent(typed), true);
+  assert.equal(weekHasContent({ ...rogue1, notes: 'plan' }), true);
+  assert.equal(weekHasContent({ ...rogue1, footnotes: { squat: [{ n: 1, text: 'x' }] } }), true);
+  assert.equal(weekHasContent({ ...rogue1, footnotes: { squat: [{ n: 1, text: '' }] } }), false);
+  assert.deepEqual(emptyDuplicateWeeks([real, typed], [real]), []);
+});
+
+test('the next week label counts on from the highest number, past gap weeks', () => {
+  const w80 = { ...baseWeek(), id: 'a', label: 'Week 80' };
+  const gap = { ...baseWeek(), id: 'b', label: 'No workout' };
+  const w79 = { ...baseWeek(), id: 'c', label: 'Week 79' };
+  assert.equal(nextWeekLabelFrom([w79, w80, gap]), 'Week 81');
+  assert.equal(nextWeekLabelFrom([gap]), undefined);
+  assert.equal(nextWeekLabelFrom([]), undefined);
 });

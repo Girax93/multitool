@@ -3,7 +3,11 @@
 
     python3 scripts/import/build.py scripts/import/weeks-01-16.py out.json
 
-Week N is dated Mon 3 Feb 2025 + 7·(N−1) days (Ari: "weeks since I started").
+Week N is dated Mon 3 Feb 2025 + 7·(N−1) days (Ari: "weeks since I started")
+unless the week gives its own `start` (from week 70 the sheet skips calendar
+weeks, see weeks-60-80.py). A week may also give its own `label` and `wid`
+(id) — used for the unnumbered "11 WK AFTER FUSION!!" block and for the empty
+"No workout" weeks that fill the skipped calendar weeks.
 Exercise ids are slugs of the exercise name, so a renamed/changed exercise is a
 new id and the history shows exactly what was done each week.
 """
@@ -48,8 +52,9 @@ def build(weeks: list[dict]) -> dict:
     out = []
     for w in weeks:
         n = w['n']
-        start = START + dt.timedelta(days=7 * (n - 1))
-        wid = f'import-week{n:02d}'
+        start = dt.date.fromisoformat(w['start']) if w.get('start') else START + dt.timedelta(days=7 * (n - 1))
+        assert start.weekday() == 0, f'week {n}: {start} is not a Monday'
+        wid = w.get('wid') or f'import-week{n:02d}'
         exercises = []
         for i, (name, weight) in enumerate(w['ex']):
             ex = {'id': slug(name), 'name': name, 'weight': weight, 'sets': 3}
@@ -122,9 +127,9 @@ def build(weeks: list[dict]) -> dict:
 
         week = {
             'id': wid,
-            'label': f'Week {n}',
+            'label': w.get('label') or f'Week {n}',
             'startDate': start.isoformat(),
-            'createdAt': int(dt.datetime(2026, 9, 21, tzinfo=dt.timezone.utc).timestamp() * 1000) + n,
+            'createdAt': int(dt.datetime(2026, 9, 21, tzinfo=dt.timezone.utc).timestamp() * 1000) + int(n * 10),
             'exercises': exercises,
             'days': days,
             'footnotes': footnotes,
