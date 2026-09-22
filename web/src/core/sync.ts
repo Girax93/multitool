@@ -38,11 +38,30 @@ export interface SyncState {
   accountId: string | null;
   lastSyncAt: number | null;
   error: string | null;
+  /** Shown while sync is off because this device was removed or the account deleted. */
+  notice: string | null;
 }
 
 interface StoredAccount {
   key: string; // base64url, 32 bytes
   accountId: string;
+  /** This device's own credential (see docs/SYNC.md); absent on accounts made before devices existed. */
+  deviceId?: string;
+  deviceToken?: string;
+}
+
+export interface DeviceInfo {
+  id: string;
+  name: string;
+  createdAt: number;
+  lastSeenAt: number;
+  /** True for the device this app runs on. */
+  current: boolean;
+}
+
+interface DeviceGrant {
+  id: string;
+  token: string;
 }
 
 interface WireRecord {
@@ -86,10 +105,11 @@ export function resolveApiUrl(): string {
 }
 
 export class SyncEngine {
-  readonly state: Signal<SyncState> = signal<SyncState>({ status: 'off', accountId: null, lastSyncAt: null, error: null });
+  readonly state: Signal<SyncState> = signal<SyncState>({ status: 'off', accountId: null, lastSyncAt: null, error: null, notice: null });
 
   private keys: AccountKeys | null = null;
-  private running = false;
+  private device: DeviceGrant | null = null;
+  private inflight: Promise<void> | null = null;
   private pending = false;
   private debounce: number | undefined;
   private interval: number | undefined;
@@ -99,6 +119,8 @@ export class SyncEngine {
     private readonly store: SyncStore,
     private readonly apiUrl = resolveApiUrl(),
     private readonly fetchFn: typeof fetch = (input, init) => fetch(input, init),
+    /** Human-readable name for this device, shown in the device list on every linked device. */
+    private readonly deviceName: () => string = () => 'Device',
   ) {}
 
   /** Load the stored account (if any) and start syncing in the background. */
@@ -109,7 +131,16 @@ export class SyncEngine {
     if (stored) {
       try {
         this.keys = await deriveKeys(fromBase64Url(stored.key));
+        this.device = stored.deviceId && stored.deviceToken ? { id: stored.deviceId, token: stored.deviceToken } : null;
         this.patch({ status: 'idle', accountId: this.keys.accountId });
+        // Accounts linked before per-device tokens existed: register this device once.
+        if (!this.device) {
+          try {
+            await this.register(this.keys);
+          } catch (err) {
+            console.warn('Could not register this device yet; will retry on the next sync', err);
+          }
+        }
       } catch (err) {
         console.error('Stored sync account is unusable', err);
       }
@@ -143,8 +174,8 @@ export class SyncEngine {
   async enable(): Promise<void> {
     if (this.keys) return;
     const keys = await deriveKeys(newAccountKey());
-    await this.request('POST', '/v1/account', { accountId: keys.accountId, secret: keys.secret });
-    await this.adopt(keys);
+    const device = await this.register(keys, false);
+    await this.adopt(keys, device);
   }
 
   /** Show a short-lived code another device can type to join this account. */
@@ -152,7 +183,7 @@ export class SyncEngine {
     const keys = this.requireKeys();
     const code = randomCode();
     const wrapped = await wrapAccountKey(code, keys.key);
-    const res = await this.request<{ expiresAt: number }>('POST', '/v1/pair', wrapped, keys);
+    const res = await this.request<{ expiresAt: number }>('POST', '/v1/pair', wrapped, true);
     return { code: formatCode(code), expiresAt: res.expiresAt };
   }
 
@@ -160,8 +191,9 @@ export class SyncEngine {
   async joinWithCode(input: string): Promise<void> {
     const code = normaliseCode(input);
     if (!code) throw new SyncError('That does not look like a link code (8 letters/digits).');
-    const claim = await this.request<{ accountId: string; salt: string; wrapped: string }>('POST', '/v1/pair/claim', {
+    const claim = await this.request<{ accountId: string; salt: string; wrapped: string; device: DeviceGrant }>('POST', '/v1/pair/claim', {
       lookupId: await lookupIdFor(code),
+      device: { name: this.deviceName() },
     });
     let key;
     try {
@@ -171,7 +203,7 @@ export class SyncEngine {
     }
     const keys = await deriveKeys(key);
     if (keys.accountId !== claim.accountId) throw new SyncError('The code did not match. Check it and try again.');
-    await this.adopt(keys);
+    await this.adopt(keys, claim.device);
   }
 
   /** Join with a recovery key typed by hand (also re-creates the account if it was deleted). */
@@ -179,45 +211,79 @@ export class SyncEngine {
     const raw = decodeRecoveryKey(text);
     if (!raw) throw new SyncError('That is not a valid recovery key.');
     const keys = await deriveKeys(raw);
-    await this.request('POST', '/v1/account', { accountId: keys.accountId, secret: keys.secret });
-    await this.adopt(keys);
+    const device = await this.register(keys, false);
+    await this.adopt(keys, device);
   }
 
   /** Stop syncing on this device. Local data stays; the account stays on the server. */
-  async disable(): Promise<void> {
+  async disable(notice: string | null = null): Promise<void> {
     this.keys = null;
+    this.device = null;
     await this.store.delete(ACCOUNT_KEY);
     await this.store.delete(CURSOR_KEY);
-    this.patch({ status: 'off', accountId: null, error: null });
+    this.patch({ status: 'off', accountId: null, error: null, notice });
     this.updateInterval();
   }
 
   /** Delete everything on the server, then stop syncing here. */
   async deleteRemote(): Promise<void> {
-    const keys = this.requireKeys();
-    await this.request('DELETE', '/v1/account', undefined, keys);
+    this.requireKeys();
+    await this.request('DELETE', '/v1/account', undefined, true);
     await this.disable();
   }
 
-  /** Run one sync now (or queue one if a run is in progress). */
-  async syncNow(): Promise<void> {
-    if (!this.keys) return;
-    if (this.running) {
+  /** Every device linked to the account, this one flagged. */
+  async listDevices(): Promise<DeviceInfo[]> {
+    this.requireKeys();
+    const res = await this.request<{ devices: Omit<DeviceInfo, 'current'>[]; current: string }>('GET', '/v1/devices', undefined, true);
+    return res.devices.map((d) => ({ ...d, current: d.id === res.current }));
+  }
+
+  async renameDevice(id: string, name: string): Promise<void> {
+    this.requireKeys();
+    await this.request('PATCH', `/v1/devices/${id}`, { name }, true);
+  }
+
+  /** Unlink another device: it can no longer read or write the account from then on. */
+  async removeDevice(id: string): Promise<void> {
+    this.requireKeys();
+    await this.request('DELETE', `/v1/devices/${id}`, undefined, true);
+  }
+
+  get deviceId(): string | null {
+    return this.device?.id ?? null;
+  }
+
+  /** Run one sync now; while a run is in progress, wait for it and queue another. */
+  syncNow(): Promise<void> {
+    if (!this.keys) return Promise.resolve();
+    if (this.inflight) {
       this.pending = true;
-      return;
+      return this.inflight;
     }
-    this.running = true;
+    this.inflight = this.runOnce().finally(() => {
+      this.inflight = null;
+    });
+    return this.inflight;
+  }
+
+  private async runOnce(): Promise<void> {
+    if (!this.keys) return;
     this.patch({ status: 'syncing' });
     try {
+      if (!this.device) await this.register(this.keys);
       await this.run(this.keys);
       this.patch({ status: 'idle', lastSyncAt: Date.now(), error: null });
     } catch (err) {
       const offline = err instanceof TypeError || (typeof navigator !== 'undefined' && navigator.onLine === false);
       const message = err instanceof Error ? err.message : String(err);
+      if (err instanceof SyncError && err.status === 401 && this.device) {
+        await this.lockedOut(message);
+        return;
+      }
       this.patch({ status: offline ? 'offline' : 'error', error: offline ? null : message });
       if (!offline) console.warn('sync failed', err);
     } finally {
-      this.running = false;
       if (this.pending) {
         this.pending = false;
         this.scheduleSoon();
@@ -227,14 +293,52 @@ export class SyncEngine {
 
   // ---- internals ------------------------------------------------------------
 
-  private async adopt(keys: AccountKeys): Promise<void> {
+  private async adopt(keys: AccountKeys, device: DeviceGrant): Promise<void> {
     this.keys = keys;
-    await this.store.set(ACCOUNT_KEY, { key: toBase64Url(keys.key), accountId: keys.accountId } satisfies StoredAccount);
+    this.device = device;
+    await this.persistAccount();
     await this.store.set(CURSOR_KEY, 0);
     await this.store.markAllDirty();
-    this.patch({ status: 'idle', accountId: keys.accountId, error: null, lastSyncAt: null });
+    this.patch({ status: 'idle', accountId: keys.accountId, error: null, lastSyncAt: null, notice: null });
     this.updateInterval();
     await this.syncNow();
+  }
+
+  private async persistAccount(): Promise<void> {
+    const keys = this.requireKeys();
+    const stored: StoredAccount = { key: toBase64Url(keys.key), accountId: keys.accountId };
+    if (this.device) {
+      stored.deviceId = this.device.id;
+      stored.deviceToken = this.device.token;
+    }
+    await this.store.set(ACCOUNT_KEY, stored);
+  }
+
+  /**
+   * Register this device with the account (creating the account when it does
+   * not exist yet). The account secret is the credential here; everything
+   * else uses the device token this returns.
+   */
+  private async register(keys: AccountKeys, persist = true): Promise<DeviceGrant> {
+    const res = await this.request<{ accountId: string; device?: DeviceGrant }>('POST', '/v1/account', {
+      accountId: keys.accountId,
+      secret: keys.secret,
+      device: { name: this.deviceName() },
+    });
+    if (!res.device?.token) throw new SyncError('The sync server did not issue a device token');
+    if (persist) {
+      this.device = res.device;
+      await this.persistAccount();
+    }
+    return res.device;
+  }
+
+  /** The server no longer accepts this device: stop syncing and say why. */
+  private async lockedOut(reason: string): Promise<void> {
+    const notice = /Unknown account/i.test(reason)
+      ? 'The sync account was deleted, so sync is now off on this device. Your data is still here; turn sync on again to start a new account.'
+      : 'This device was removed from the sync account, so sync is now off here. Your data is still here; link the device again with a code if that was a mistake.';
+    await this.disable(notice);
   }
 
   private requireKeys(): AccountKeys {
@@ -258,7 +362,7 @@ export class SyncEngine {
         changes.push({ rid, blob, u: meta.u, t: meta.t });
       }
 
-      const res = await this.request<SyncResponse>('POST', '/v1/sync', { since, changes }, keys);
+      const res = await this.request<SyncResponse>('POST', '/v1/sync', { since, changes }, true);
 
       const rejected = new Set(res.rejected.map((r) => r.rid));
       const pushedByRid = new Map<string, { key: string; u: number }>();
@@ -299,10 +403,14 @@ export class SyncEngine {
     }
   }
 
-  private async request<T = unknown>(method: string, path: string, body?: unknown, auth?: AccountKeys): Promise<T> {
+  private async request<T = unknown>(method: string, path: string, body?: unknown, auth = false): Promise<T> {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    if (auth) headers['Authorization'] = `Bearer ${auth.accountId}.${auth.secret}`;
+    if (auth) {
+      const keys = this.requireKeys();
+      if (!this.device) throw new SyncError('This device is not registered with the account yet.');
+      headers['Authorization'] = `Bearer ${keys.accountId}.${this.device.token}`;
+    }
     const res = await this.fetchFn(`${this.apiUrl}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     if (res.status === 204) return undefined as T;
     const text = await res.text();

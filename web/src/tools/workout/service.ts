@@ -15,22 +15,34 @@ import {
 const WEEK_PREFIX = 'weeks/';
 const SETTINGS_KEY = 'settings';
 const CURRENT_KEY = 'ui/currentWeek';
+const VIEW_KEY = 'ui/view';
+
+/** How many weeks the log shows at once. Per device (a phone wants one, a PC wants more). */
+export interface ViewPref {
+  mode: 'one' | 'some' | 'all';
+  /** Weeks per page in `some` mode. */
+  per: number;
+}
+export const DEFAULT_VIEW: ViewPref = { mode: 'one', per: 3 };
 
 export class WorkoutService {
   readonly weeks: Signal<Week[]> = signal<Week[]>([]);
   readonly settings: Signal<WorkoutSettings> = signal<WorkoutSettings>(DEFAULT_SETTINGS);
   readonly currentWeekId: Signal<string | null> = signal<string | null>(null);
+  readonly view: Signal<ViewPref> = signal<ViewPref>(DEFAULT_VIEW);
   readonly status: Signal<string | null> = signal<string | null>(null);
 
   constructor(private readonly ctx: ToolContext) {}
 
   async init(): Promise<void> {
-    const [entries, settings, current] = await Promise.all([
+    const [entries, settings, current, view] = await Promise.all([
       this.ctx.kv.list<Week>(WEEK_PREFIX),
       this.ctx.kv.get<Partial<WorkoutSettings>>(SETTINGS_KEY),
       this.ctx.kv.get<string>(CURRENT_KEY),
+      this.ctx.kv.get<Partial<ViewPref>>(VIEW_KEY),
     ]);
     if (settings) this.settings.set({ ...DEFAULT_SETTINGS, ...settings });
+    if (view) this.view.set({ ...DEFAULT_VIEW, ...view });
     const weeks = sortWeeks(entries.map((e) => e.value));
     this.weeks.set(weeks);
     const last = weeks[weeks.length - 1];
@@ -74,6 +86,13 @@ export class WorkoutService {
   select(id: string): void {
     this.currentWeekId.set(id);
     void this.ctx.kv.set(CURRENT_KEY, id);
+  }
+
+  setView(patch: Partial<ViewPref>): void {
+    const next = { ...this.view.get(), ...patch };
+    next.per = Math.min(20, Math.max(2, Math.round(next.per) || DEFAULT_VIEW.per));
+    this.view.set(next);
+    void this.ctx.kv.set(VIEW_KEY, next);
   }
 
   /** Apply an immutable update to one week and persist it. */

@@ -31,15 +31,15 @@ async function backend(): Promise<typeof fetch> {
 const API = 'http://sync.test';
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-function device(fetchFn: typeof fetch): { kv: MemoryKV; sync: SyncEngine } {
+function device(fetchFn: typeof fetch, name = 'Test device'): { kv: MemoryKV; sync: SyncEngine } {
   const kv = new MemoryKV();
-  return { kv, sync: new SyncEngine(kv, API, fetchFn) };
+  return { kv, sync: new SyncEngine(kv, API, fetchFn, () => name) };
 }
 
 test('two devices: link with a code, push, pull, edit, delete, local-only keys', async () => {
   const fetchFn = await backend();
-  const a = device(fetchFn);
-  const b = device(fetchFn);
+  const a = device(fetchFn, 'Laptop');
+  const b = device(fetchFn, 'Phone');
 
   await a.kv.set('tool/workout/weeks/w1', { label: 'Week 1' });
   await a.kv.set('tool/workout/ui/currentWeek', 'w1'); // per-device, never synced
@@ -58,6 +58,22 @@ test('two devices: link with a code, push, pull, edit, delete, local-only keys',
   await b.sync.start();
   await b.sync.joinWithCode(code.toLowerCase());
   assert.equal(b.sync.accountId, a.sync.accountId);
+  assert.notEqual(b.sync.deviceId, a.sync.deviceId);
+  const devices = await a.sync.listDevices();
+  assert.deepEqual(
+    devices.map((d) => [d.name, d.current]),
+    [
+      ['Laptop', true],
+      ['Phone', false],
+    ],
+  );
+  assert.deepEqual(
+    (await b.sync.listDevices()).map((d) => [d.name, d.current]),
+    [
+      ['Laptop', false],
+      ['Phone', true],
+    ],
+  );
   assert.deepEqual(await b.kv.get('tool/workout/weeks/w1'), { label: 'Week 1' });
   assert.equal(await b.kv.get('tool/workout/ui/currentWeek'), undefined);
   assert.equal(await b.kv.get('core/settings'), undefined);
@@ -107,7 +123,7 @@ test('two devices: link with a code, push, pull, edit, delete, local-only keys',
   assert.equal((await a.kv.dirty(1000)).length, 0);
 
   // recovery key on a third device (its own local data is merged in)
-  const c = device(fetchFn);
+  const c = device(fetchFn, 'Tablet');
   await c.kv.set('tool/workout/weeks/w9', { label: 'made on C before linking' });
   await c.sync.start();
   const recovery = a.sync.recoveryKey();
@@ -116,16 +132,52 @@ test('two devices: link with a code, push, pull, edit, delete, local-only keys',
   assert.equal((await c.kv.list('tool/timer/timers/')).length, 120);
   await a.sync.syncNow();
   assert.deepEqual(await a.kv.get('tool/workout/weeks/w9'), { label: 'made on C before linking' });
+  assert.equal((await a.sync.listDevices()).length, 3);
 
-  // turning sync off keeps data; deleting the account removes it for everyone
-  await c.sync.disable();
+  // rename, then remove the tablet from the laptop: the tablet is locked out on its next sync
+  const tablet = (await a.sync.listDevices()).find((d) => d.name === 'Tablet');
+  assert.ok(tablet);
+  await a.sync.renameDevice(tablet.id, 'Old tablet');
+  assert.ok((await a.sync.listDevices()).some((d) => d.name === 'Old tablet'));
+  await a.sync.removeDevice(tablet.id);
+  assert.equal((await a.sync.listDevices()).length, 2);
+  await c.kv.set('tool/workout/weeks/w9', { label: 'edited on the removed tablet' });
+  await c.sync.syncNow();
   assert.equal(c.sync.state.get().status, 'off');
-  assert.equal((await c.kv.list('tool/timer/timers/')).length, 120);
+  assert.match(c.sync.state.get().notice ?? '', /removed from the sync account/);
+  assert.equal((await c.kv.list('tool/timer/timers/')).length, 120); // local data untouched
+  await a.sync.syncNow();
+  assert.deepEqual(await a.kv.get('tool/workout/weeks/w9'), { label: 'made on C before linking' }); // its edit never arrived
+  await assert.rejects(c.sync.listDevices(), /not set up/);
+
+  // deleting the account: the other device notices and turns sync off
   await a.sync.deleteRemote();
   await b.sync.syncNow();
-  assert.equal(b.sync.state.get().status, 'error');
-  assert.match(b.sync.state.get().error ?? '', /Unknown account/);
+  assert.equal(b.sync.state.get().status, 'off');
+  assert.match(b.sync.state.get().notice ?? '', /account was deleted/);
   for (const d of [a, b, c]) d.sync.stop();
+});
+
+test('an account linked before device tokens existed registers itself on start', async () => {
+  const fetchFn = await backend();
+  const a = device(fetchFn, 'Old laptop');
+  await a.sync.start();
+  await a.sync.enable();
+  const key = (await a.kv.get<{ key: string; accountId: string }>('sync/account'))!;
+  a.sync.stop();
+  // a second store with the same account but no device credential (pre-devices layout)
+  const legacy = device(fetchFn, 'Legacy PC');
+  await legacy.kv.set('sync/account', { key: key.key, accountId: key.accountId });
+  await legacy.kv.set('sync/cursor', 0);
+  await legacy.sync.start();
+  await legacy.sync.syncNow();
+  assert.equal(legacy.sync.state.get().status, 'idle');
+  assert.ok(legacy.sync.deviceId);
+  assert.deepEqual(
+    (await legacy.sync.listDevices()).map((d) => d.name),
+    ['Old laptop', 'Legacy PC'],
+  );
+  legacy.sync.stop();
 });
 
 test('offline is reported, not fatal, and the work is retried', async () => {

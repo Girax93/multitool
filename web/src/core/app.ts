@@ -14,6 +14,7 @@ import { allTools, type ToolContext, type ToolDefinition } from './registry.js';
 import { navigate } from './router.js';
 import { SettingsStore, applyTheme } from './settings.js';
 import { SyncEngine } from './sync.js';
+import { describeDevice } from './device.js';
 import { Emitter, type Unsubscribe } from './store.js';
 import { showToast, type ToastOptions } from '../ui/toast.js';
 
@@ -65,7 +66,7 @@ export class App {
   readonly kv: SyncStore = createKV();
   readonly native: NativeBridge = createNativeBridge();
   readonly settings = new SettingsStore(scoped(this.kv, 'core'));
-  readonly sync = new SyncEngine(this.kv);
+  readonly sync = new SyncEngine(this.kv, undefined, undefined, () => describeDevice(this.info));
   readonly nativeEvents = new Emitter<NativeEvent>();
   readonly info: NativeInfo = this.native.info();
 

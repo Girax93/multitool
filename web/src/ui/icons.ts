@@ -41,5 +41,7 @@ export const icons = {
   key: base('<circle cx="8" cy="15" r="4"/><path d="M10.9 12.1L21 2"/><path d="M15 8l3 3"/><path d="M18 5l3 3"/>'),
   refresh: base('<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>'),
   copy: base('<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>'),
+  phone: base('<rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/>'),
+  monitor: base('<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>'),
   scale: base('<path d="M12 3v18"/><path d="M5 7h14"/><path d="M3 15l2-8 2 8a2 2 0 0 1-4 0z"/><path d="M17 15l2-8 2 8a2 2 0 0 1-4 0z"/>'),
 };

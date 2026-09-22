@@ -3,7 +3,7 @@
 
 import type { App } from '../core/app.js';
 import { h, replace, svg } from '../core/dom.js';
-import type { SyncState } from '../core/sync.js';
+import type { DeviceInfo, SyncState } from '../core/sync.js';
 import { icons } from './icons.js';
 import { confirmSheet, openSheet } from './sheet.js';
 import { showToast } from './toast.js';
@@ -76,7 +76,7 @@ export function renderSyncSection(app: App): HTMLElement {
         h('button', { class: 'btn btn-primary', dataset: { testid: 'sync-enable' }, onClick: () => void enable() }, svg(icons.cloud), 'Turn on sync'),
         h('button', { class: 'btn', dataset: { testid: 'sync-join' }, onClick: () => openJoinSheet(app) }, svg(icons.link), 'Link to an existing account…'),
       );
-      replace(extra);
+      replace(extra, state.notice ? h('div', { class: 'notice', dataset: { testid: 'sync-notice' } }, h('span', null, state.notice)) : null);
     } else {
       replace(
         actions,
@@ -104,6 +104,7 @@ export function renderSyncSection(app: App): HTMLElement {
             'Turn off on this device',
           ),
         ),
+        renderDevices(app),
         h(
           'details',
           { class: 'danger-zone' },
@@ -155,6 +156,97 @@ export function renderSyncSection(app: App): HTMLElement {
     actions,
     extra,
   );
+}
+
+// ---- linked devices ---------------------------------------------------------
+
+function renderDevices(app: App): HTMLElement {
+  const list = h('ul', { class: 'list', dataset: { testid: 'device-list' } });
+  const hint = h('p', { class: 'muted' }, 'Loading…');
+  const box = h('div', { class: 'devices' }, h('h3', { class: 'subtitle' }, 'Linked devices'), hint, list);
+
+  const load = async (): Promise<void> => {
+    try {
+      const devices = await app.sync.listDevices();
+      hint.textContent = devices.length === 1 ? 'Only this device so far. Anything linked with a code shows up here.' : 'Every device that can read this account. Remove any you do not recognise.';
+      replace(list, ...devices.map((d) => deviceRow(app, d, load)));
+    } catch (err) {
+      hint.textContent = `Could not load the device list: ${(err as Error).message}`;
+    }
+  };
+  void load();
+  return box;
+}
+
+function deviceRow(app: App, d: DeviceInfo, reload: () => Promise<void>): HTMLElement {
+  const sub = `${d.current ? 'This device · ' : ''}last seen ${relative(d.lastSeenAt)} · linked ${new Date(d.createdAt).toLocaleDateString()}`;
+  const renameBtn = h(
+    'button',
+    {
+      class: 'iconbtn iconbtn-sm',
+      'aria-label': 'Rename device',
+      title: 'Rename',
+      onClick: () => openRenameSheet(app, d, reload),
+    },
+    svg(icons.edit),
+  );
+  const removeBtn = d.current
+    ? null
+    : h(
+        'button',
+        {
+          class: 'iconbtn iconbtn-sm',
+          'aria-label': 'Remove device',
+          title: 'Remove from the account',
+          dataset: { testid: 'device-remove' },
+          onClick: async (e: Event) => {
+            const btn = e.currentTarget as HTMLButtonElement;
+            if (!(await confirmSheet(`Remove "${d.name}" from the account? It stops syncing immediately; the data already on it stays there.`, 'Remove'))) return;
+            const ok = await busy(btn, async () => {
+              await app.sync.removeDevice(d.id);
+              return true;
+            });
+            if (ok) {
+              showToast(`${d.name} removed`);
+              await reload();
+            }
+          },
+        },
+        svg(icons.trash),
+      );
+  return h(
+    'li',
+    { class: `list-row${d.current ? ' list-current' : ''}`, dataset: { device: d.id } },
+    h('span', { class: 'list-icon' }, svg(/android|iphone|ipad|phone|tablet/i.test(d.name) ? icons.phone : icons.monitor)),
+    h('span', { class: 'list-main' }, h('span', { class: 'list-title' }, d.name), h('span', { class: 'list-sub' }, sub)),
+    renameBtn,
+    removeBtn,
+  );
+}
+
+function openRenameSheet(app: App, d: DeviceInfo, reload: () => Promise<void>): void {
+  const sheet = openSheet({ title: 'Rename device' });
+  const input = h('input', { class: 'input', value: d.name, maxlength: '60', autocomplete: 'off', dataset: { testid: 'device-name' } });
+  const save = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Save');
+  const form = h(
+    'form',
+    {
+      onSubmit: (e: Event) => {
+        e.preventDefault();
+        void busy(save as HTMLButtonElement, async () => {
+          await app.sync.renameDevice(d.id, input.value);
+          sheet.close();
+          await reload();
+        });
+      },
+    },
+    h('p', { class: 'muted' }, 'The name is shown in the device list on all linked devices.'),
+    input,
+    h('div', { class: 'row row-end sheet-actions' }, save),
+  );
+  replace(sheet.body, form);
+  input.focus();
+  input.select();
 }
 
 // ---- sheets -----------------------------------------------------------------

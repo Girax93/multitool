@@ -197,6 +197,14 @@ def main() -> int:
             expect(first_row.locator("[data-testid='day-header']")).to_contain_text("97.1 kg")
             page.screenshot(path=str(SHOTS / "10-workout-grid.png"))
 
+            # a note added straight from the notes row (not tied to a set)
+            expect(page.locator("[data-testid='legend']")).to_be_visible()
+            page.locator("[data-testid='footnote-add']").nth(1).click()  # rows column
+            page.fill("[data-testid='footnote-add-input']", "bench felt wobbly")
+            page.click("[data-testid='footnote-add-save']")
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            expect(page.locator("[data-testid='footnotes'] td.wk-fncell").nth(1)).to_contain_text("bench felt wobbly")
+
             # new week copies the exercises
             label_before = page.locator("[data-testid='week-label']").inner_text()
             page.click("[data-testid='week-menu']")
@@ -205,9 +213,27 @@ def main() -> int:
             assert page.locator("[data-testid='exercise-header']").count() == 2
             expect(page.locator("tbody tr").nth(0).locator("td.wk-cell").nth(0)).to_have_text("")
 
+            # view modes: all weeks, X per page with tabs, back to one
+            page.click("[data-testid='week-menu']")
+            page.click("[data-testid='menu-new-week']")  # third week
+            page.click("[data-testid='view-all']")
+            expect(page.locator("[data-testid='workout-grid']")).to_have_count(3)
+            page.click("[data-testid='view-some']")
+            page.fill("[data-testid='view-per']", "2")
+            page.locator("[data-testid='view-per']").dispatch_event("change")
+            expect(page.locator("[data-testid='week-tabs'] .wk-tab")).to_have_count(2)
+            expect(page.locator("[data-testid='workout-grid']")).to_have_count(1)  # newest week is on page 2 alone
+            page.locator("[data-testid='week-tabs'] .wk-tab").nth(0).click()
+            expect(page.locator("[data-testid='workout-grid']")).to_have_count(2)
+            expect(page.locator("[data-testid='week-tabs'] .wk-tab-active")).to_have_count(1)
+            page.screenshot(path=str(SHOTS / "10b-workout-pages.png"))
+            page.click("[data-testid='view-one']")
+            expect(page.locator("[data-testid='workout-grid']")).to_have_count(1)
+            page.wait_for_timeout(300)  # let the view preference write land before reloading
+
             # data survives reload; the week menu reaches the editors and the tool settings page
             page.reload(wait_until="networkidle")
-            expect(page.locator("[data-testid='workout-grid']")).to_be_visible()
+            expect(page.locator("[data-testid='workout-grid']")).to_have_count(1)
             page.click("[data-testid='week-menu']")
             page.click("[data-testid='menu-exercises']")
             expect(page.locator("[data-testid='exercise-name']").first).to_be_visible()

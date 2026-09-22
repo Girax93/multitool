@@ -63,7 +63,9 @@ export function append(parent: Node, children: Child[]): void {
 }
 
 export function clear(el: Element): void {
-  while (el.firstChild) el.removeChild(el.firstChild);
+  // Atomic: removing a focused input one node at a time fires blur/change
+  // handlers mid-loop, which may re-render the same host.
+  el.replaceChildren();
 }
 
 /** Replace all children of `host`. */
