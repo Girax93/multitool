@@ -1233,8 +1233,11 @@ body.sheet-open {
   border-color: var(--accent);
   color: var(--accent-ink);
 }
-/* week blocks: full width on phones (the slim bar spans the screen), centred
-   in the window on wide screens; a grid wider than the window scrolls */
+/* week blocks: every week is as wide as the widest one on the page (the
+   column is sized by its widest child and the children stretch to it), the
+   block is centred in the window on wide screens, and a grid wider than the
+   window scrolls. Phones let the column fill the screen so the slim bar spans
+   it. */
 .wk-weeks {
   display: flex;
   flex-direction: column;
@@ -1245,18 +1248,27 @@ body.sheet-open {
 }
 @media (min-width: 900px) {
   .wk-weeks {
-    align-items: center;
+    width: max-content;
+    min-width: 0;
+    margin: 0 auto;
     padding-top: 12px;
   }
 }
 .wk-week {
   min-width: max-content;
-  max-width: 100%;
 }
 .wk-row {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+.wk-row .wk-grid {
+  flex: 1;
+}
+/* fill the common width; extra space is shared out across the columns, so a
+   narrower week's cells grow a little instead of leaving a ragged right edge */
+.wk-row .wk-table {
+  width: 100%;
 }
 /* ‹ › on each side of the grid box (1-week mode, wide screens) */
 .wk-side-arrow {
