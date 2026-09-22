@@ -10,6 +10,7 @@ import {
   newWeek,
   nextWeekLabelFrom,
   sortWeeks,
+  weekHasContent,
   type Week,
   type WorkoutSettings,
 } from './model.js';
@@ -148,9 +149,9 @@ export class WorkoutService {
   }
 
   /**
-   * Merge imported weeks (same id → replaced). Empty weeks that only duplicate
-   * an imported week's label (a "Week 38" started by hand before the real one
-   * arrived) are removed. Returns how many were added / replaced / removed.
+   * Merge imported weeks (same id → replaced). Empty weeks whose label another
+   * week with content already carries (a "Week 38" started by hand before the
+   * real one arrived) are removed. Returns how many were added / replaced / removed.
    */
   async importWeeks(weeks: Week[], settings?: WorkoutSettings): Promise<{ added: number; replaced: number; removed: number }> {
     const byId = new Map(this.weeks.get().map((w) => [w.id, w]));
@@ -162,7 +163,9 @@ export class WorkoutService {
       byId.set(w.id, w);
       await this.ctx.kv.set(WEEK_PREFIX + w.id, w);
     }
-    const duplicates = emptyDuplicateWeeks([...byId.values()], weeks);
+    const imported = new Set(weeks.map((w) => w.id));
+    const all = [...byId.values()];
+    const duplicates = emptyDuplicateWeeks(all, all.filter((w) => imported.has(w.id) || weekHasContent(w)));
     for (const d of duplicates) {
       byId.delete(d.id);
       await this.ctx.kv.delete(WEEK_PREFIX + d.id);
