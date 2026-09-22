@@ -205,12 +205,21 @@ def main() -> int:
             assert page.locator("[data-testid='exercise-header']").count() == 2
             expect(page.locator("tbody tr").nth(0).locator("td.wk-cell").nth(0)).to_have_text("")
 
-            # data survives reload; tool settings page renders
+            # data survives reload; the week menu reaches the editors and the tool settings page
             page.reload(wait_until="networkidle")
             expect(page.locator("[data-testid='workout-grid']")).to_be_visible()
-            page.goto(base + "#/t/workout/settings", wait_until="networkidle")
+            page.click("[data-testid='week-menu']")
+            page.click("[data-testid='menu-exercises']")
+            expect(page.locator("[data-testid='exercise-name']").first).to_be_visible()
+            expect(page.locator(".sheet-panel")).to_have_count(1)  # the menu sheet has finished closing
+            page.locator(".sheet-panel .iconbtn[aria-label='Close']").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            page.click("[data-testid='week-menu']")
+            page.click("[data-testid='menu-settings']")
             expect(page.locator("[data-testid='workout-settings']")).to_be_visible()
             page.screenshot(path=str(SHOTS / "11-workout-settings.png"))
+            page.go_back()
+            expect(page.locator("[data-testid='workout-grid']")).to_be_visible()
 
             # light theme render
             light = browser.new_context(viewport=PHONE, color_scheme="light")
@@ -251,6 +260,12 @@ def main() -> int:
             pb.on("console", lambda m: errors.append("B: " + m.text) if m.type == "error" else None)
             pb.goto(base + "#/settings", wait_until="networkidle")
             expect(pb.locator("[data-testid='sync-status']")).to_contain_text("Sync is off")
+            pb.click("[data-testid='sync-join']")
+            pb.click("[data-testid='join-use-recovery']")  # switches sheets: recovery key form
+            expect(pb.locator("[data-testid='recovery-input']")).to_be_visible()
+            expect(pb.locator(".sheet-panel")).to_have_count(1)
+            pb.locator(".sheet-panel .iconbtn[aria-label='Close']").click()
+            expect(pb.locator(".sheet-panel")).to_have_count(0)
             pb.click("[data-testid='sync-join']")
             pb.fill("[data-testid='join-code']", code.lower())
             pb.screenshot(path=str(SHOTS / "14-sync-join.png"))

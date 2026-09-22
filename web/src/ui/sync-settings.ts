@@ -225,7 +225,7 @@ function openJoinSheet(app: App): void {
   );
   const recoveryLink = h(
     'button',
-    { class: 'btn btn-sm', type: 'button', onClick: () => (sheet.close(), openRecoveryJoinSheet(app)) },
+    { class: 'btn btn-sm', type: 'button', dataset: { testid: 'join-use-recovery' }, onClick: () => sheet.closeThen(() => openRecoveryJoinSheet(app)) },
     svg(icons.key),
     'Use a recovery key instead',
   );

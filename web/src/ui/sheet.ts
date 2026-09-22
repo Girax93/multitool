@@ -10,6 +10,13 @@ export interface Sheet {
   body: HTMLElement;
   setTitle(title: string): void;
   close(): void;
+  /**
+   * Close, then run `fn` once the sheet's history entry is really gone. Use
+   * this whenever the next step navigates or opens another sheet: closing
+   * pops a history entry asynchronously, and a hash change or pushState made
+   * before that pop lands would be undone by it.
+   */
+  closeThen(fn: () => void): void;
 }
 
 export interface SheetOptions {
@@ -23,6 +30,7 @@ export interface SheetOptions {
 interface Entry {
   sheet: Sheet;
   pushed: boolean;
+  afterClose: (() => void)[];
   destroy(): void;
 }
 
@@ -63,6 +71,7 @@ export function openSheet(opts: SheetOptions = {}): Sheet {
   const entry: Entry = {
     pushed: true,
     sheet: null as unknown as Sheet,
+    afterClose: [],
     destroy() {
       if (destroyed) return;
       destroyed = true;
@@ -72,6 +81,8 @@ export function openSheet(opts: SheetOptions = {}): Sheet {
       setTimeout(() => el.remove(), 180);
       if (stack.length === 0) document.body.classList.remove('sheet-open');
       opts.onClose?.();
+      const fns = entry.afterClose.splice(0);
+      for (const fn of fns) setTimeout(fn, 0);
     },
   };
   const sheet: Sheet = {
@@ -86,6 +97,14 @@ export function openSheet(opts: SheetOptions = {}): Sheet {
       // handler destroys the sheet. Otherwise destroy directly.
       if (entry.pushed) history.back();
       else entry.destroy();
+    },
+    closeThen(fn) {
+      if (destroyed) {
+        setTimeout(fn, 0);
+        return;
+      }
+      entry.afterClose.push(fn);
+      sheet.close();
     },
   };
   entry.sheet = sheet;

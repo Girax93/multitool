@@ -310,10 +310,7 @@ function openWeekMenu(service: WorkoutService, ctx: ToolContext, weekId: string)
       {
         class: 'list-row list-btn',
         dataset: testid ? { testid } : undefined,
-        onClick: () => {
-          sheet.close();
-          setTimeout(onClick, 0);
-        },
+        onClick: () => sheet.closeThen(onClick),
       },
       h('span', { class: 'list-icon' }, svg(icon)),
       h('span', { class: 'list-title' }, label),
@@ -326,7 +323,7 @@ function openWeekMenu(service: WorkoutService, ctx: ToolContext, weekId: string)
       item('New week (copies exercises)', icons.plus, () => service.createWeek(), 'menu-new-week'),
       item('Edit exercises', icons.dumbbell, () => openExercisesEditor(service, weekId), 'menu-exercises'),
       item('Edit week: label, dates, days', icons.edit, () => openWeekEditor(service, ctx, weekId), 'menu-week'),
-      item('Workout settings & import', icons.settings, () => navigate(toolPath('workout', 'settings'))),
+      item('Workout settings & import', icons.settings, () => navigate(toolPath('workout', 'settings')), 'menu-settings'),
     ),
   );
 }
