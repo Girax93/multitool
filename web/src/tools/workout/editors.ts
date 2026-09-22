@@ -14,10 +14,15 @@ import {
   clean,
   footnotesFor,
   getSet,
+  isNumbered,
   moveExercise,
+  nextFootnoteNumber,
+  numberedFootnotes,
   removeDay,
   removeExercise,
   removeFootnote,
+  setDayDate,
+  setDayWeekday,
   toggleRef,
   updateDay,
   updateExercise,
@@ -179,7 +184,8 @@ export function openSetEditor(service: WorkoutService, ctx: ToolContext, weekId:
       ),
     );
 
-    const notes = footnotesFor(w, ex.id);
+    // Only numbered notes can be attached to a set; plain notes live in the notes row.
+    const notes = numberedFootnotes(w, ex.id);
     const noteChips = h(
       'div',
       { class: 'chips' },
@@ -196,7 +202,7 @@ export function openSetEditor(service: WorkoutService, ctx: ToolContext, weekId:
     );
     let noteForm: HTMLElement | null = null;
     if (addingNote) {
-      const noteInput = h('input', { type: 'text', class: 'input', placeholder: `Note ${notes.length + 1} for ${ex.name} this week`, dataset: { testid: 'note-input' } });
+      const noteInput = h('input', { type: 'text', class: 'input', placeholder: `Note ${nextFootnoteNumber(w, ex.id)} for ${ex.name} this week`, dataset: { testid: 'note-input' } });
       const save = (): void => {
         const text = noteInput.value.trim();
         if (!text) return;
@@ -307,9 +313,21 @@ export function openDayEditor(service: WorkoutService, weekId: string, dayId: st
     }
     const settings = service.settings.get();
     sheet.setTitle(`${day.weekday}${day.date ? ` · ${day.date}` : ''}`);
-    const dateInput = h('input', { type: 'date', class: 'input', value: day.date ?? '' });
+    // Trained on another day than planned: pick the weekday, the date follows.
+    const weekdayChips = h(
+      'div',
+      { class: 'chips', role: 'radiogroup', 'aria-label': 'Weekday', dataset: { testid: 'day-weekday' } },
+      ...WEEKDAYS.map((wd) =>
+        chip(wd, wd === day.weekday, () => {
+          if (wd === day.weekday) return;
+          service.update(weekId, (x) => setDayWeekday(x, dayId, wd));
+          render();
+        }),
+      ),
+    );
+    const dateInput = h('input', { type: 'date', class: 'input', value: day.date ?? '', dataset: { testid: 'day-date' } });
     dateInput.addEventListener('change', () => {
-      service.update(weekId, (x) => updateDay(x, dayId, { date: dateInput.value || undefined }));
+      service.update(weekId, (x) => setDayDate(x, dayId, dateInput.value || undefined));
       render();
     });
     const bw = h('input', {
@@ -342,6 +360,7 @@ export function openDayEditor(service: WorkoutService, weekId: string, dayId: st
 
     replace(
       sheet.body,
+      h('div', { class: 'field-col' }, h('span', { class: 'field-label' }, 'Weekday'), weekdayChips),
       field('Date', dateInput),
       settings.trackBodyweight ? field(`Bodyweight (${settings.unit})`, bw) : null,
       field('Marks', marks),
@@ -562,7 +581,7 @@ export function openWeekEditor(service: WorkoutService, ctx: ToolContext, weekId
 // ---- Footnote editor -------------------------------------------------------------
 
 export function openFootnoteEditor(service: WorkoutService, weekId: string, exId: string, n: number): Sheet {
-  const sheet = openSheet({ title: `Note ${n}` });
+  const sheet = openSheet({ title: 'Note' });
   const w = service.get(weekId);
   const ex = w?.exercises.find((e) => e.id === exId);
   const note = w ? footnotesFor(w, exId).find((f) => f.n === n) : undefined;
@@ -570,8 +589,9 @@ export function openFootnoteEditor(service: WorkoutService, weekId: string, exId
     sheet.close();
     return sheet;
   }
-  sheet.setTitle(`${ex.name} · note ${n}`);
-  const text = h('textarea', { class: 'input textarea', rows: 3, value: note.text });
+  const numbered = isNumbered(note);
+  sheet.setTitle(numbered ? `${ex.name} · note ${n}` : `${ex.name} · note`);
+  const text = h('textarea', { class: 'input textarea', rows: 3, value: note.text, dataset: { testid: 'footnote-text' } });
   text.addEventListener('input', () => service.update(weekId, (x) => updateFootnote(x, exId, n, text.value)));
   replace(
     sheet.body,
@@ -585,7 +605,7 @@ export function openFootnoteEditor(service: WorkoutService, weekId: string, exId
           type: 'button',
           class: 'btn btn-text btn-danger-text',
           onClick: async () => {
-            if (await confirmSheet('Delete this note? References to it are removed from the sets.', 'Delete note')) {
+            if (await confirmSheet(numbered ? 'Delete this note? References to it are removed from the sets.' : 'Delete this note?', 'Delete note')) {
               service.update(weekId, (x) => removeFootnote(x, exId, n));
               sheet.close();
             }

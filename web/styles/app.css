@@ -908,17 +908,20 @@ body.sheet-open {
   margin: -16px -16px calc(-24px - var(--safe-bottom));
   height: calc(100dvh - 61px - var(--safe-top));
 }
+/* Slim bar above each grid — phones only; wide screens use the corner cell,
+   the side arrows and the menu in the bottom-right cell instead. */
 .wk-bar {
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 6px 8px;
+  padding: 2px 4px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
-  /* the grid may be wider than the window: keep the bar in view */
+  /* the grid may be wider than the window: keep the bar in view
+     (100cqw = the scroll container's width, see .wk-scroll) */
   position: sticky;
   left: 0;
-  width: 100vw;
+  width: 100cqw;
   max-width: 100%;
   box-sizing: border-box;
 }
@@ -926,8 +929,9 @@ body.sheet-open {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  align-items: center;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
   border: 0;
   background: transparent;
   color: var(--text);
@@ -937,24 +941,30 @@ body.sheet-open {
 }
 .wk-label-title {
   font-weight: 650;
-  font-size: 16px;
+  font-size: 15px;
 }
 .wk-label-sub {
   font-size: 12px;
   color: var(--muted);
+  font-family: var(--mono);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
 }
 .wk-scroll {
   flex: 1;
   overflow: auto;
   overscroll-behavior: contain;
   padding-bottom: calc(24px + var(--safe-bottom));
+  container-type: inline-size;
 }
 .wk-grid {
   min-width: max-content;
+}
+/* From 1200 px a full week usually fits, so the bar gives way to the side
+   arrows and the menu in the grid's corner. */
+@media (min-width: 1200px) {
+  .wk-bar {
+    display: none;
+  }
 }
 .wk-table {
   border-collapse: separate;
@@ -992,6 +1002,18 @@ body.sheet-open {
 .wk-table th.wk-corner {
   left: 0;
   z-index: 3;
+}
+/* the week's label + start date in the corner cell */
+.wk-corner-btn {
+  min-width: 96px;
+  gap: 2px;
+}
+.wk-corner-date {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  font-family: var(--mono);
+  white-space: nowrap;
 }
 .wk-hbtn {
   display: flex;
@@ -1112,7 +1134,7 @@ body.sheet-open {
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px 16px;
-  padding: 8px 12px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
 }
@@ -1124,7 +1146,7 @@ body.sheet-open {
   cursor: pointer;
   list-style: none;
   margin: 0;
-  padding: 4px 0;
+  padding: 6px 0;
 }
 .wk-legend summary::-webkit-details-marker {
   display: none;
@@ -1136,11 +1158,18 @@ body.sheet-open {
 .wk-legend[open] summary::before {
   content: '▾ ';
 }
-.wk-legend-list {
+/* colours in one column, marks in the next; both left aligned */
+.wk-legend-cols {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
-  margin: 4px 0 6px;
+  align-items: flex-start;
+  gap: 8px 40px;
+  margin: 2px 0 8px;
+}
+.wk-legend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
 .wk-legend-item {
   display: flex;
@@ -1171,15 +1200,20 @@ body.sheet-open {
   min-height: 32px;
   padding: 2px 6px;
 }
-/* page tabs (X weeks per page) */
+/* page tabs (X weeks per page) — clear space below the legend so they read as
+   part of the week list, not of the legend */
 .wk-tabs {
   display: flex;
   gap: 6px;
-  padding: 8px 12px;
+  padding: 18px 12px 4px;
   overflow-x: auto;
-  border-bottom: 1px solid var(--border);
   background: var(--bg);
   scrollbar-width: thin;
+}
+@media (min-width: 900px) {
+  .wk-tabs {
+    justify-content: center;
+  }
 }
 .wk-tab {
   flex: none;
@@ -1199,28 +1233,59 @@ body.sheet-open {
   border-color: var(--accent);
   color: var(--accent-ink);
 }
-/* week blocks */
+/* week blocks: full width on phones (the slim bar spans the screen), centred
+   in the window on wide screens; a grid wider than the window scrolls */
 .wk-weeks {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  align-items: stretch;
+  gap: 28px;
   min-width: max-content;
-  padding-bottom: 16px;
+  padding: 0 0 16px;
+}
+@media (min-width: 900px) {
+  .wk-weeks {
+    align-items: center;
+    padding-top: 12px;
+  }
 }
 .wk-week {
   min-width: max-content;
+  max-width: 100%;
+}
+.wk-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+/* ‹ › on each side of the grid box (1-week mode, wide screens) */
+.wk-side-arrow {
+  display: none;
+  flex: none;
+  width: 36px;
+  height: 56px;
+  border-radius: var(--radius-sm);
+}
+.wk-side-arrow:disabled {
+  opacity: 0.25;
+}
+@media (min-width: 1200px) {
+  .wk-side-arrow {
+    display: inline-flex;
+  }
 }
 .wk-bar-multi {
-  border-top: 2px solid var(--border);
   justify-content: space-between;
-  padding-left: 12px;
 }
 .wk-bar-multi .wk-label {
-  align-items: flex-start;
-  flex: 1;
+  justify-content: flex-start;
+  padding-left: 8px;
 }
 .wk-mode-one .wk-bar {
   border-top: 0;
+}
+.wk-tabs + .wk-scroll .wk-weeks {
+  padding-top: 4px;
 }
 /* notes row under each grid */
 .wk-fnrow td,
@@ -1233,6 +1298,7 @@ body.sheet-open {
   padding: 8px !important;
   font-size: 13px;
   color: var(--muted);
+  text-align: left;
 }
 .wk-fncell {
   padding: 6px 8px 6px 6px !important;
@@ -1245,6 +1311,24 @@ body.sheet-open {
 .wk-fncell .wk-cbtn-notes {
   min-height: 32px;
   color: var(--muted);
+}
+/* bottom-right cell: the week note with the week menu in its corner */
+.wk-fnlast {
+  padding-bottom: 32px !important;
+}
+.wk-corner-menu {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  width: 30px;
+  height: 30px;
+  color: var(--muted);
+}
+.wk-corner-menu:hover {
+  color: var(--text);
+}
+.wk-fn-plain {
+  color: var(--text);
 }
 .wk-fn {
   display: block;

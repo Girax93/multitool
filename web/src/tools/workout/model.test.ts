@@ -5,6 +5,7 @@ import {
   addDay,
   addExercise,
   addFootnote,
+  displayFootnotes,
   formatSet,
   getSet,
   isoWeek,
@@ -12,15 +13,19 @@ import {
   moveExercise,
   newWeek,
   nextFootnoteNumber,
+  numberedFootnotes,
   parseLegacyCell,
   parseWorkoutExport,
   removeExercise,
   removeFootnote,
+  setDayDate,
+  setDayWeekday,
   sortWeeks,
   toggleRef,
   updateDay,
   updateExercise,
   updateExerciseDayStyle,
+  updateFootnote,
   updateSet,
   weekSummary,
   weekdayOfDate,
@@ -133,6 +138,63 @@ test('footnotes are numbered per exercise and references follow removal', () => 
   assert.equal(nextFootnoteNumber(w, 'squat'), 3); // numbers never reused
   w = updateSet(w, 'd1', 'squat', 0, toggleRef(getSet(w, 'd1', 'squat', 0), 2));
   assert.equal(getSet(w, 'd1', 'squat', 0).fn, undefined);
+});
+
+test('plain notes have no number, keep unique keys and never disturb the numbering', () => {
+  let w = baseWeek();
+  const p1 = addFootnote(w, 'squat', 'felt great all week', false);
+  w = p1.week;
+  const n1 = addFootnote(w, 'squat', 'left knee');
+  w = n1.week;
+  const p2 = addFootnote(w, 'squat', 'try 5 sets next week', false);
+  w = p2.week;
+  assert.deepEqual([p1.n, n1.n, p2.n], [-1, 1, -2]);
+  assert.equal(nextFootnoteNumber(w, 'squat'), 2);
+  assert.deepEqual(
+    numberedFootnotes(w, 'squat').map((f) => f.n),
+    [1],
+  );
+  assert.deepEqual(
+    displayFootnotes(w, 'squat').map((f) => f.text),
+    ['left knee', 'felt great all week', 'try 5 sets next week'],
+  );
+  w = updateFootnote(w, 'squat', -1, 'felt great');
+  w = removeFootnote(w, 'squat', -2);
+  assert.deepEqual(w.footnotes['squat'], [
+    { n: -1, text: 'felt great' },
+    { n: 1, text: 'left knee' },
+  ]);
+});
+
+test('moving a day to another weekday keeps its sets and the date follows', () => {
+  let w = baseWeek();
+  w = updateSet(w, 'd1', 'squat', 0, { v: '12' });
+  w = setDayWeekday(w, 'd1', 'Tue');
+  assert.deepEqual(
+    w.days.map((d) => [d.id, d.weekday, d.date]),
+    [
+      ['d1', 'Tue', '2026-05-26'],
+      ['d2', 'Wed', '2026-05-27'],
+      ['d3', 'Fri', '2026-05-29'],
+    ],
+  );
+  assert.equal(getSet(w, 'd1', 'squat', 0).v, '12');
+  // Thursday sorts after Wednesday
+  w = setDayWeekday(w, 'd1', 'Thu');
+  assert.deepEqual(
+    w.days.map((d) => d.id),
+    ['d2', 'd1', 'd3'],
+  );
+  // a date picks its weekday
+  w = setDayDate(w, 'd3', '2026-05-30');
+  assert.deepEqual(w.days.find((d) => d.id === 'd3')?.weekday, 'Sat');
+  w = setDayDate(w, 'd3', undefined);
+  assert.equal(w.days.find((d) => d.id === 'd3')?.date, undefined);
+  assert.equal(w.days.find((d) => d.id === 'd3')?.weekday, 'Sat');
+  // without a week start date the day's own date shifts along
+  const undated = setDayWeekday({ ...baseWeek(), startDate: undefined }, 'd1', 'Sun');
+  assert.equal(undated.days[undated.days.length - 1]?.weekday, 'Sun');
+  assert.equal(undated.days[undated.days.length - 1]?.date, '2026-05-31');
 });
 
 test('legacy dot notation', () => {

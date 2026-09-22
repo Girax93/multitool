@@ -70,6 +70,11 @@ export interface DayEntry extends CellStyle {
 }
 
 export interface Footnote {
+  /**
+   * Positive: a numbered note, referenced from sets as ¹ ².
+   * Negative: a plain note about the exercise this week, shown without a number
+   * (the key is still unique per exercise so it can be edited and removed).
+   */
   n: number;
   text: string;
 }
@@ -328,14 +333,39 @@ export function moveExercise(week: Week, exId: string, direction: -1 | 1): Week 
 
 // ---- Days ------------------------------------------------------------------
 
+/** Days in weekday order (stable, so two entries on the same weekday keep their order). */
+export function sortDays(days: DayEntry[]): DayEntry[] {
+  return [...days].sort((x, y) => weekdayOffset(x.weekday) - weekdayOffset(y.weekday));
+}
+
 export function addDay(week: Week, id: string, weekday: Weekday): Week {
   const day = newDay(id, weekday, week.startDate, week.exercises);
-  const days = [...week.days, day].sort((x, y) => weekdayOffset(x.weekday) - weekdayOffset(y.weekday));
-  return { ...week, days };
+  return { ...week, days: sortDays([...week.days, day]) };
 }
 
 export function removeDay(week: Week, dayId: string): Week {
   return { ...week, days: week.days.filter((d) => d.id !== dayId) };
+}
+
+/**
+ * Move a training day to another weekday (trained Tuesday instead of Monday).
+ * The date follows from the week's start date; the row keeps its sets and notes.
+ */
+export function setDayWeekday(week: Week, dayId: string, weekday: Weekday): Week {
+  const day = week.days.find((d) => d.id === dayId);
+  if (!day) return week;
+  const patch: Partial<DayEntry> = { weekday };
+  if (week.startDate) patch.date = addDays(week.startDate, weekdayOffset(weekday));
+  else if (day.date) patch.date = addDays(day.date, weekdayOffset(weekday) - weekdayOffset(day.weekday));
+  const next = updateDay(week, dayId, patch);
+  return { ...next, days: sortDays(next.days) };
+}
+
+/** Set a day's date; the weekday follows (an empty date only clears the date). */
+export function setDayDate(week: Week, dayId: string, date: string | undefined): Week {
+  if (!date) return updateDay(week, dayId, { date: undefined });
+  const next = updateDay(week, dayId, { date, weekday: weekdayOfDate(date) });
+  return { ...next, days: sortDays(next.days) };
 }
 
 // ---- Footnotes -------------------------------------------------------------
@@ -344,12 +374,34 @@ export function footnotesFor(week: Week, exId: string): Footnote[] {
   return week.footnotes[exId] ?? [];
 }
 
+export function isNumbered(f: Footnote): boolean {
+  return f.n > 0;
+}
+
+/** Only the numbered notes (the ones sets can reference), ascending. */
+export function numberedFootnotes(week: Week, exId: string): Footnote[] {
+  return footnotesFor(week, exId)
+    .filter(isNumbered)
+    .sort((a, b) => a.n - b.n);
+}
+
+/** Display order for the notes row: numbered notes first (1, 2, …), then plain notes in the order they were added. */
+export function displayFootnotes(week: Week, exId: string): Footnote[] {
+  const all = footnotesFor(week, exId);
+  return [...all.filter(isNumbered).sort((a, b) => a.n - b.n), ...all.filter((f) => !isNumbered(f)).sort((a, b) => b.n - a.n)];
+}
+
 export function nextFootnoteNumber(week: Week, exId: string): number {
   return footnotesFor(week, exId).reduce((m, f) => Math.max(m, f.n), 0) + 1;
 }
 
-export function addFootnote(week: Week, exId: string, text: string): { week: Week; n: number } {
-  const n = nextFootnoteNumber(week, exId);
+/**
+ * Add a note for an exercise this week. Numbered notes get the next free
+ * number (numbers are never reused); plain notes get the next free negative
+ * key and are shown without a number.
+ */
+export function addFootnote(week: Week, exId: string, text: string, numbered = true): { week: Week; n: number } {
+  const n = numbered ? nextFootnoteNumber(week, exId) : footnotesFor(week, exId).reduce((m, f) => Math.min(m, f.n), 0) - 1;
   const list = [...footnotesFor(week, exId), { n, text }];
   return { week: { ...week, footnotes: { ...week.footnotes, [exId]: list } }, n };
 }

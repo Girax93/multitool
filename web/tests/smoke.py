@@ -9,6 +9,7 @@ Exit code != 0 on any failure. Run after `node scripts/build-web.mjs`.
     python web/tests/smoke.py [--base-url URL]
 """
 import argparse
+import datetime
 import pathlib
 import re
 import subprocess
@@ -197,13 +198,29 @@ def main() -> int:
             expect(first_row.locator("[data-testid='day-header']")).to_contain_text("97.1 kg")
             page.screenshot(path=str(SHOTS / "10-workout-grid.png"))
 
-            # a note added straight from the notes row (not tied to a set)
+            # trained Tuesday instead of Monday: the weekday moves and the date follows
+            first_row.locator("[data-testid='day-header']").click()
+            page.locator("[data-testid='day-weekday'] .chip", has_text=re.compile(r"^Tue$")).click()
+            expect(page.locator(".sheet-title")).to_contain_text("Tue ·")
+            tue_date = page.locator("[data-testid='day-date']").input_value()
+            week_start = page.locator("[data-testid='week-label'] .wk-corner-date").inner_text()
+            assert tue_date == (datetime.date.fromisoformat(week_start) + datetime.timedelta(days=1)).isoformat(), (week_start, tue_date)
+            page.locator(".sheet-panel button", has_text="Done").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            expect(first_row.locator("[data-testid='day-header']")).to_contain_text("Tue")
+            expect(first_row.locator("[data-testid='day-header']")).to_contain_text("97.1 kg")  # same row, data kept
+
+            # a plain note added from the notes row: no number, numbered ones keep theirs
             expect(page.locator("[data-testid='legend']")).to_be_visible()
+            expect(page.locator("[data-testid='legend']")).not_to_have_attribute("open", re.compile(".*"))  # closed by default
             page.locator("[data-testid='footnote-add']").nth(1).click()  # rows column
             page.fill("[data-testid='footnote-add-input']", "bench felt wobbly")
             page.click("[data-testid='footnote-add-save']")
             expect(page.locator(".sheet-panel")).to_have_count(0)
-            expect(page.locator("[data-testid='footnotes'] td.wk-fncell").nth(1)).to_contain_text("bench felt wobbly")
+            rows_notes = page.locator("[data-testid='footnotes'] td.wk-fncell").nth(1)
+            expect(rows_notes.locator(".wk-fn-plain")).to_have_text("bench felt wobbly")
+            expect(rows_notes.locator(".wk-fn").nth(0)).to_contain_text("22kg")  # numbered note first
+            assert rows_notes.locator(".wk-fn-plain sup").count() == 0
 
             # new week copies the exercises
             label_before = page.locator("[data-testid='week-label']").inner_text()

@@ -7,7 +7,7 @@ import { currentRoute, navigate, onRouteChange, toolPath } from '../../core/rout
 import { icons } from '../../ui/icons.js';
 import { closeAllSheets, openSheet } from '../../ui/sheet.js';
 import { openDayEditor, openExercisesEditor, openFootnoteEditor, openNotesEditor, openSetEditor, openWeekEditor } from './editors.js';
-import { addFootnote, footnotesFor, legendColor, weekSummary, type CellStyle, type SetCell, type Week, type WorkoutSettings } from './model.js';
+import { addFootnote, displayFootnotes, isNumbered, legendColor, weekSummary, type CellStyle, type SetCell, type Week, type WorkoutSettings } from './model.js';
 import type { ViewPref, WorkoutService } from './service.js';
 import { renderWorkoutSettings } from './settings-view.js';
 
@@ -175,28 +175,46 @@ function renderViewControl(service: WorkoutService, view: ViewPref): HTMLElement
   );
 }
 
+/**
+ * One week. The label lives in the grid's corner cell and the menu in its
+ * bottom-right cell. Wide screens (≥ 1200 px, see app.css) flank the grid with
+ * the ‹ › arrows in 1-week mode; narrower screens keep a slim bar above the
+ * grid instead, where the arrows and the menu stay reachable without
+ * scrolling the grid.
+ */
 function renderWeekBlock(service: WorkoutService, ctx: ToolContext, week: Week, weeks: Week[], settings: WorkoutSettings, single: boolean): HTMLElement {
   const idx = weeks.findIndex((w) => w.id === week.id);
   const prev = weeks[idx - 1];
   const next = weeks[idx + 1];
-  const label = h(
-    'button',
-    { class: 'wk-label', dataset: { testid: 'week-label' }, onClick: () => openWeekPicker(service) },
-    h('span', { class: 'wk-label-title' }, week.label),
-    h('span', { class: 'wk-label-sub' }, week.startDate ? `${week.startDate} · ${weekSummary(week)}` : weekSummary(week)),
+  const arrow = (dir: -1 | 1, cls: string): HTMLElement => {
+    const target = dir < 0 ? prev : next;
+    return h(
+      'button',
+      { class: `iconbtn ${cls}`, 'aria-label': dir < 0 ? 'Previous week' : 'Next week', disabled: !target, onClick: () => target && service.select(target.id) },
+      svg(dir < 0 ? icons.chevronLeft : icons.chevronRight),
+    );
+  };
+  const bar = h(
+    'div',
+    { class: `wk-bar${single ? '' : ' wk-bar-multi'}` },
+    single ? arrow(-1, 'wk-bar-arrow') : null,
+    h(
+      'button',
+      { class: 'wk-label', dataset: { testid: 'week-bar-label' }, onClick: () => openWeekPicker(service) },
+      h('span', { class: 'wk-label-title' }, week.label),
+      week.startDate ? h('span', { class: 'wk-label-sub' }, week.startDate) : null,
+    ),
+    single ? arrow(1, 'wk-bar-arrow') : null,
+    h('button', { class: 'iconbtn', 'aria-label': 'Week menu', dataset: { testid: 'week-menu' }, onClick: () => openWeekMenu(service, ctx, week.id) }, svg(icons.more)),
   );
-  const menu = h('button', { class: 'iconbtn', 'aria-label': 'Week menu', dataset: { testid: 'week-menu' }, onClick: () => openWeekMenu(service, ctx, week.id) }, svg(icons.more));
-  const bar = single
-    ? h(
-        'div',
-        { class: 'wk-bar' },
-        h('button', { class: 'iconbtn', 'aria-label': 'Previous week', disabled: !prev, onClick: () => prev && service.select(prev.id) }, svg(icons.chevronLeft)),
-        label,
-        h('button', { class: 'iconbtn', 'aria-label': 'Next week', disabled: !next, onClick: () => next && service.select(next.id) }, svg(icons.chevronRight)),
-        menu,
-      )
-    : h('div', { class: 'wk-bar wk-bar-multi' }, label, menu);
-  return h('section', { class: 'wk-week', dataset: { week: week.id } }, bar, renderGrid(service, ctx, week, settings));
+  const row = h(
+    'div',
+    { class: 'wk-row' },
+    single ? arrow(-1, 'wk-side-arrow') : null,
+    renderGrid(service, ctx, week, settings),
+    single ? arrow(1, 'wk-side-arrow') : null,
+  );
+  return h('section', { class: 'wk-week', dataset: { week: week.id } }, bar, row);
 }
 
 function styleAttrs(settings: WorkoutSettings, ...layers: (CellStyle | undefined)[]): { bg?: string; star: boolean } {
@@ -231,7 +249,13 @@ function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, setti
     h(
       'th',
       { class: 'wk-corner' },
-      h('button', { class: 'wk-hbtn', dataset: { testid: 'week-edit' }, onClick: () => openWeekEditor(service, ctx, week.id) }, 'Day'),
+      // The week's label and start date sit where the sheet had "Day"; tapping opens the week list.
+      h(
+        'button',
+        { class: 'wk-hbtn wk-corner-btn', dataset: { testid: 'week-label' }, title: 'Jump to another week', onClick: () => openWeekPicker(service) },
+        h('span', { class: 'wk-label-title' }, week.label),
+        week.startDate ? h('span', { class: 'wk-corner-date' }, week.startDate) : null,
+      ),
     ),
   );
   for (const ex of week.exercises) {
@@ -304,14 +328,15 @@ function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, setti
 
 /**
  * The notes row under the grid, like the footnote row of the original sheet:
- * each exercise's numbered notes sit under its own columns, the week's note
- * under the Notes column.
+ * each exercise's notes sit under its own columns (numbered ones first, then
+ * plain notes added with +), the week's note under the Notes column, and the
+ * week menu in the bottom-right corner.
  */
 function renderNotesRow(service: WorkoutService, ctx: ToolContext, week: Week): HTMLElement {
   const tr = h('tr', { class: 'wk-fnrow', dataset: { testid: 'footnotes' } });
   tr.appendChild(h('th', { class: 'wk-dayh wk-fnh' }, h('span', { class: 'wk-fnh-text' }, 'Notes')));
   for (const ex of week.exercises) {
-    const notes = footnotesFor(week, ex.id);
+    const notes = displayFootnotes(week, ex.id);
     const cell = h(
       'td',
       { colSpan: ex.sets, class: 'wk-fncell', dataset: { ex: ex.id } },
@@ -321,15 +346,15 @@ function renderNotesRow(service: WorkoutService, ctx: ToolContext, week: Week): 
         ...notes.map((f) =>
           h(
             'button',
-            { class: 'wk-fn', title: 'Edit note', onClick: () => openFootnoteEditor(service, week.id, ex.id, f.n) },
-            h('sup', null, String(f.n)),
-            ' ',
+            { class: `wk-fn${isNumbered(f) ? '' : ' wk-fn-plain'}`, title: 'Edit note', onClick: () => openFootnoteEditor(service, week.id, ex.id, f.n) },
+            isNumbered(f) ? h('sup', null, String(f.n)) : null,
+            isNumbered(f) ? ' ' : null,
             f.text,
           ),
         ),
         h(
           'button',
-          { class: 'wk-fn-add', 'aria-label': `Add a note for ${ex.name}`, title: 'Add a note', dataset: { testid: 'footnote-add' }, onClick: () => openAddNoteSheet(service, week.id, ex.id) },
+          { class: 'wk-fn-add', 'aria-label': `Add a note for ${ex.name}`, title: 'Add a note (without a number)', dataset: { testid: 'footnote-add' }, onClick: () => openAddNoteSheet(service, week.id, ex.id) },
           svg(icons.plus, 'icon icon-sm'),
         ),
       ),
@@ -339,23 +364,29 @@ function renderNotesRow(service: WorkoutService, ctx: ToolContext, week: Week): 
   tr.appendChild(
     h(
       'td',
-      { class: 'wk-notes wk-fncell' },
+      { class: 'wk-notes wk-fncell wk-fnlast' },
       h(
         'button',
         { class: 'wk-cbtn wk-cbtn-notes', dataset: { testid: 'week-notes' }, title: 'Notes for the whole week', onClick: () => openWeekEditor(service, ctx, week.id) },
         week.notes ?? '',
+      ),
+      h(
+        'button',
+        { class: 'iconbtn iconbtn-sm wk-corner-menu', 'aria-label': 'Week menu', title: 'Week menu', dataset: { testid: 'week-menu-corner' }, onClick: () => openWeekMenu(service, ctx, week.id) },
+        svg(icons.more),
       ),
     ),
   );
   return h('tfoot', null, tr);
 }
 
+/** "+" in the notes row: a plain note about the exercise this week, no number. */
 function openAddNoteSheet(service: WorkoutService, weekId: string, exId: string): void {
   const w = service.get(weekId);
   const ex = w?.exercises.find((e) => e.id === exId);
   if (!w || !ex) return;
   const sheet = openSheet({ title: `Note for ${ex.name || 'exercise'}` });
-  const input = h('input', { type: 'text', class: 'input', placeholder: `Note ${footnotesFor(w, exId).length + 1}`, dataset: { testid: 'footnote-add-input' } });
+  const input = h('input', { type: 'text', class: 'input', placeholder: 'e.g. felt strong all week', dataset: { testid: 'footnote-add-input' } });
   const form = h(
     'form',
     {
@@ -363,11 +394,11 @@ function openAddNoteSheet(service: WorkoutService, weekId: string, exId: string)
         e.preventDefault();
         const text = input.value.trim();
         if (!text) return;
-        service.update(weekId, (x) => addFootnote(x, exId, text).week);
+        service.update(weekId, (x) => addFootnote(x, exId, text, false).week);
         sheet.close();
       },
     },
-    h('p', { class: 'muted' }, 'Notes are numbered per exercise; tap a set to attach a number to it.'),
+    h('p', { class: 'muted' }, 'A general note for this exercise this week — it gets no number. For a note about one set, tap that set and use “+ note” there.'),
     input,
     h('div', { class: 'row row-end sheet-actions' }, h('button', { class: 'btn btn-primary', type: 'submit', dataset: { testid: 'footnote-add-save' } }, 'Add')),
   );
@@ -375,8 +406,9 @@ function openAddNoteSheet(service: WorkoutService, weekId: string, exId: string)
   input.focus();
 }
 
+/** Collapsed until opened; colours in one column, marks in a second, both left aligned. */
 function renderLegend(settings: WorkoutSettings): HTMLElement {
-  const details = h('details', { class: 'wk-legend', open: matchMedia('(min-width: 900px)').matches, dataset: { testid: 'legend' } });
+  const details = h('details', { class: 'wk-legend', dataset: { testid: 'legend' } });
   details.appendChild(h('summary', { class: 'card-title' }, 'Legend'));
   const colours = h('div', { class: 'wk-legend-list' });
   for (const entry of settings.legend) {
@@ -388,8 +420,7 @@ function renderLegend(settings: WorkoutSettings): HTMLElement {
     colours.appendChild(h('div', { class: 'wk-legend-item' }, sw, h('span', null, entry.label)));
   }
   const marks = h('div', { class: 'wk-legend-list' }, ...settings.marks.map((m) => h('div', { class: 'wk-legend-item' }, h('code', { class: 'wk-mark' }, m.symbol), h('span', null, m.meaning))));
-  details.appendChild(colours);
-  details.appendChild(marks);
+  details.appendChild(h('div', { class: 'wk-legend-cols' }, colours, marks));
   details.appendChild(h('p', { class: 'muted wk-legend-hint' }, 'Numbers after a set (¹ ²) point to the notes row under each week. Edit colours and marks in the tool settings.'));
   return details;
 }
