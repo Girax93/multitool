@@ -13,6 +13,10 @@
 //     "Start <timed exercise>?" → 3 × (work 1:30 → rest 1:30), the matching
 //     cell opens for typing during each rest.
 // Rest, step and work lengths live in the tool settings (session.*).
+//
+// The day's `session` (start, end, rest taken) is kept up to date from here:
+// every set typed and every countdown that ends moves its end, so the stats
+// page can show how long a workout took and how much of it was rest.
 
 import { h, replace, svg, uid } from '../../core/dom.js';
 import { useService, type ToolContext } from '../../core/registry.js';
@@ -21,12 +25,15 @@ import type { Unsubscribe } from '../../core/store.js';
 import { icons } from '../../ui/icons.js';
 import { openSheet } from '../../ui/sheet.js';
 import {
+  SESSION_GAP_MS,
   addDay,
   exerciseDone,
   formatSeconds,
   nextTimedExercise,
   sessionDay,
+  sessionMinutes,
   toIsoDate,
+  touchSession,
   updateFootnote,
   weekForDate,
   weekdayOfDate,
@@ -100,6 +107,7 @@ class SessionController {
   }
 
   dispose(): void {
+    this.settle();
     for (const u of this.unsubs) u();
   }
 
@@ -111,6 +119,8 @@ class SessionController {
     const ex = w?.exercises.find((x) => x.id === e.exId);
     if (!w || !day || !ex) return;
     this.state.last = e;
+    this.lastAt = Date.now();
+    this.activity();
     this.promptMissingNotes(w, ex, e);
     // Typing the result of a timed set while its rest already runs: keep that rest.
     if (this.state.seq && this.state.seq.ex.id === ex.id && this.state.seq.dayId === day.id && this.state.phase !== 'idle') return;
@@ -123,12 +133,43 @@ class SessionController {
     const t = list.find((x) => x.id === id);
     if (!t) {
       // Dismissed from the Timers tool or the notification.
+      this.settle();
       this.state = { ...this.state, phase: 'idle', timerId: undefined, seq: undefined };
       this.renderPanel();
       return;
     }
+    if (t.state === 'finished') this.settle();
     if (t.state === 'finished' && this.state.seq) this.advanceSequence();
     else this.renderPanel();
+  }
+
+  // ---- workout duration -------------------------------------------------------
+
+  /** When the current countdown started (wall clock), until it is settled into the day's session. */
+  private startedAt: number | undefined;
+
+  /** When the last set was typed (the page can stay open for days; an old `last` must not collect today's rests). */
+  private lastAt = 0;
+
+  /** The day the activity belongs to: the set typed last (if recent), else today's row. */
+  private sessionTarget(): { weekId: string; dayId: string } | undefined {
+    if (this.state.last && Date.now() - this.lastAt <= SESSION_GAP_MS) return { weekId: this.state.last.weekId, dayId: this.state.last.dayId };
+    return this.context ? { weekId: this.context.week.id, dayId: this.context.day.id } : undefined;
+  }
+
+  /** Something happened (a set typed, a countdown over): extend the day's session. */
+  private activity(restSec = 0): void {
+    const target = this.sessionTarget();
+    if (!target) return;
+    this.service.update(target.weekId, (w) => touchSession(w, target.dayId, Date.now(), restSec));
+  }
+
+  /** The countdown that was running is over (rang, Off, replaced, dismissed): book its time. */
+  private settle(): void {
+    if (this.startedAt === undefined) return;
+    const elapsed = Math.max(0, (Date.now() - this.startedAt) / 1000);
+    this.startedAt = undefined;
+    this.activity(this.state.phase === 'rest' ? elapsed : 0);
   }
 
   // ---- actions --------------------------------------------------------------
@@ -155,12 +196,14 @@ class SessionController {
     this.clearTimer();
     const t = this.timers.add({ name: label, durationMs: sec * 1000, saved: false, start: true });
     this.state = { ...this.state, phase, timerId: t.id, label, baseSec: sec, seq, offer: undefined };
+    this.startedAt = Date.now();
     this.renderPanel();
   }
 
   private clearTimer(): void {
     const id = this.state.timerId;
     if (!id || !this.timers) return;
+    this.settle();
     const t = this.timers.timers.get().find((x) => x.id === id);
     if (t) (t.state === 'finished' ? this.timers.dismiss(id) : this.timers.stop(id));
     this.state.timerId = undefined;
@@ -171,7 +214,11 @@ class SessionController {
   }
 
   repeat(): void {
-    if (this.state.timerId && this.timers) this.timers.restartWith(this.state.timerId, this.state.baseSec * 1000);
+    if (this.state.timerId && this.timers) {
+      this.settle();
+      this.timers.restartWith(this.state.timerId, this.state.baseSec * 1000);
+      this.startedAt = Date.now();
+    }
     this.renderPanel();
   }
 
@@ -314,9 +361,12 @@ class SessionController {
     if (s.phase === 'idle' || !t) {
       const ctxWeek = this.context;
       const timed = ctxWeek ? ctxWeek.week.exercises.filter((ex) => ex.timedSec && !exerciseDone(ctxWeek.day, ex)) : [];
+      const minutes = ctxWeek ? sessionMinutes(ctxWeek.day) : undefined;
+      const rest = ctxWeek?.day.session ? Math.round(ctxWeek.day.session.restSec / 60) : 0;
       replace(
         this.panel,
         h('div', { class: 'sess-idle' }, h('span', { class: 'muted' }, `Type a set and the ${formatSeconds(this.restSec())} rest starts`), btn(`Rest ${formatSeconds(this.restSec())}`, () => this.startRest('Rest'), 'btn btn-sm', 'session-rest-start')),
+        minutes !== undefined ? h('div', { class: 'sess-sub', dataset: { testid: 'session-duration' } }, `Workout so far: ${minutes} min${rest ? ` · rest ${rest} min` : ''}`) : null,
         timed.length && ctxWeek
           ? h('div', { class: 'sess-timed' }, ...timed.map((ex) => btn(`${ex.name}: ${ex.sets} × ${formatSeconds(ex.timedSec || 0)}`, () => this.startTimed(ctxWeek.week.id, ctxWeek.day.id, ex), 'btn btn-sm', 'session-timed')))
           : null,

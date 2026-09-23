@@ -22,6 +22,7 @@ const WEEK_PREFIX = 'weeks/';
 const SETTINGS_KEY = 'settings';
 const CURRENT_KEY = 'ui/currentWeek';
 const VIEW_KEY = 'ui/view';
+const STATS_KEY = 'ui/stats';
 
 /** How many weeks the log shows at once. Per device (a phone wants one, a PC wants more). */
 export interface ViewPref {
@@ -30,6 +31,16 @@ export interface ViewPref {
   per: number;
 }
 export const DEFAULT_VIEW: ViewPref = { mode: 'one', per: 3 };
+
+/** What the stats page reads from: the last N calendar weeks or everything. Per device, like the view. */
+export interface StatsPref {
+  mode: 'last' | 'all';
+  weeks: number;
+  /** Exercise id shown in the progression chart. */
+  exercise?: string;
+  metric?: string;
+}
+export const DEFAULT_STATS: StatsPref = { mode: 'last', weeks: 13 };
 
 /** A set cell was typed into (workout mode listens to start the rest timer). */
 export interface SetTyped {
@@ -45,20 +56,23 @@ export class WorkoutService {
   readonly settings: Signal<WorkoutSettings> = signal<WorkoutSettings>(DEFAULT_SETTINGS);
   readonly currentWeekId: Signal<string | null> = signal<string | null>(null);
   readonly view: Signal<ViewPref> = signal<ViewPref>(DEFAULT_VIEW);
+  readonly stats: Signal<StatsPref> = signal<StatsPref>(DEFAULT_STATS);
   readonly status: Signal<string | null> = signal<string | null>(null);
   readonly setTyped = new Emitter<SetTyped>();
 
   constructor(private readonly ctx: ToolContext) {}
 
   async init(): Promise<void> {
-    const [entries, settings, current, view] = await Promise.all([
+    const [entries, settings, current, view, stats] = await Promise.all([
       this.ctx.kv.list<Week>(WEEK_PREFIX),
       this.ctx.kv.get<Partial<WorkoutSettings>>(SETTINGS_KEY),
       this.ctx.kv.get<string>(CURRENT_KEY),
       this.ctx.kv.get<Partial<ViewPref>>(VIEW_KEY),
+      this.ctx.kv.get<Partial<StatsPref>>(STATS_KEY),
     ]);
     if (settings) this.settings.set(mergeSettings(settings));
     if (view) this.view.set({ ...DEFAULT_VIEW, ...view });
+    if (stats) this.stats.set({ ...DEFAULT_STATS, ...stats });
     const weeks = sortWeeks(entries.map((e) => e.value));
     this.weeks.set(weeks);
     // Always open on the newest week (Ari: "take me to the most recent week");
@@ -111,6 +125,13 @@ export class WorkoutService {
     next.per = Math.min(20, Math.max(2, Math.round(next.per) || DEFAULT_VIEW.per));
     this.view.set(next);
     void this.ctx.kv.set(VIEW_KEY, next);
+  }
+
+  setStats(patch: Partial<StatsPref>): void {
+    const next = { ...this.stats.get(), ...patch };
+    next.weeks = Math.min(520, Math.max(1, Math.round(next.weeks) || DEFAULT_STATS.weeks));
+    this.stats.set(next);
+    void this.ctx.kv.set(STATS_KEY, next);
   }
 
   /** Apply an immutable update to one week and persist it. */

@@ -20,6 +20,16 @@
   --mono: ui-monospace, 'IBM Plex Mono', 'SF Mono', Menlo, Consolas, monospace;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* charts (stats page): one blue for single series, GitHub-like greens for
+     tracked workouts, orange for "other" workouts, a faint red for empty weeks */
+  --chart-1: #3987e5;
+  --chart-empty: rgba(239, 83, 80, 0.11);
+  --heat-0: #1c2a21;
+  --heat-1: #0e4429;
+  --heat-2: #006d32;
+  --heat-3: #26a641;
+  --heat-4: #39d353;
+  --heat-other: #d95926;
   color-scheme: dark;
 }
 
@@ -35,6 +45,14 @@
     --accent-ink: #fff8ea;
     --accent-2: #0f9d8a;
     --shadow: 0 1px 2px rgba(20, 30, 40, 0.08);
+    --chart-1: #2a78d6;
+    --chart-empty: rgba(192, 57, 43, 0.11);
+    --heat-0: #e3ebe5;
+    --heat-1: #9be9a8;
+    --heat-2: #40c463;
+    --heat-3: #30a14e;
+    --heat-4: #216e39;
+    --heat-other: #eb6834;
     color-scheme: light;
   }
 }
@@ -49,6 +67,14 @@
   --accent-ink: #fff8ea;
   --accent-2: #0f9d8a;
   --shadow: 0 1px 2px rgba(20, 30, 40, 0.08);
+  --chart-1: #2a78d6;
+  --chart-empty: rgba(192, 57, 43, 0.11);
+  --heat-0: #e3ebe5;
+  --heat-1: #9be9a8;
+  --heat-2: #40c463;
+  --heat-3: #30a14e;
+  --heat-4: #216e39;
+  --heat-other: #eb6834;
   color-scheme: light;
 }
 
@@ -1709,4 +1735,313 @@ body.sheet-open {
 /* Keep toasts clear of the workout-mode panel. */
 body:has(.sess-panel) .toasts {
   bottom: calc(170px + var(--safe-bottom));
+}
+
+/* ---- Stats page (stats-view.ts, charts.ts) ------------------------------- */
+.stats-head {
+  flex-wrap: wrap;
+}
+.stats-range {
+  margin-left: auto;
+}
+.stats-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+}
+.stats-card {
+  margin: 0;
+}
+.stats-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+}
+.stats-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+.stats-tile-value {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.stats-tile-label {
+  font-size: 13px;
+  margin-top: 2px;
+}
+.stats-tile-sub {
+  font-size: 12px;
+  margin-top: 2px;
+}
+.stats-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.stats-select {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.stats-note {
+  font-size: 12px;
+  margin: 6px 0 0;
+}
+/* charts */
+.chart {
+  position: relative;
+}
+.chart-plot {
+  width: 100%;
+  min-height: 60px;
+}
+.chart-svg {
+  display: block;
+  max-width: 100%;
+  font-family: var(--font);
+  touch-action: pan-y;
+}
+.chart-gridline {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.chart-baseline {
+  stroke: var(--muted);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+.chart-ylabel,
+.chart-xlabel {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.chart-bar {
+  stroke: none;
+}
+.chart-empty-col {
+  fill: var(--chart-empty);
+}
+.chart-empty-tick {
+  fill: var(--danger);
+  opacity: 0.8;
+}
+.chart-hover-col {
+  fill: var(--text);
+  opacity: 0.06;
+  pointer-events: none;
+}
+.chart-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.chart-marker {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+.chart-crosshair {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+.chart-tip {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: 6px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--text);
+}
+.chart-tip-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.chart-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chart-tip-row b {
+  font-variant-numeric: tabular-nums;
+}
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+.chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.chart-swatch {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  flex: none;
+}
+.chart-swatch-line {
+  height: 3px;
+  width: 14px;
+  border-radius: 2px;
+}
+/* activity map */
+.heatmap-wrap {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+}
+.heatmap-days {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: 30px;
+}
+.heatmap-day {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 13px;
+}
+.heatmap-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.heatmap-scroll {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  padding-bottom: 4px;
+}
+.heatmap-svg {
+  display: block;
+  font-family: var(--font);
+}
+.hm-cell {
+  cursor: pointer;
+}
+.hm-off {
+  fill: var(--heat-0);
+  background: var(--heat-0);
+}
+.hm-t1 {
+  fill: var(--heat-1);
+  background: var(--heat-1);
+}
+.hm-t2 {
+  fill: var(--heat-2);
+  background: var(--heat-2);
+}
+.hm-t3 {
+  fill: var(--heat-3);
+  background: var(--heat-3);
+}
+.hm-t4 {
+  fill: var(--heat-4);
+  background: var(--heat-4);
+}
+.hm-other {
+  fill: var(--heat-other);
+  background: var(--heat-other);
+}
+.heatmap-legend {
+  margin: 6px 0 0;
+}
+.heatmap-legend .chart-swatch + .chart-swatch {
+  margin-left: -3px;
+}
+/* calendar */
+.cal-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.cal-title {
+  font-weight: 600;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: 28px repeat(7, 1fr);
+  gap: 3px;
+  align-items: stretch;
+}
+.cal-head,
+.cal-wk-head {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  padding-bottom: 2px;
+}
+.cal-wk {
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.cal-day {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-height: 40px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+}
+.cal-out {
+  opacity: 0.4;
+}
+.cal-future {
+  opacity: 0.35;
+}
+.cal-today {
+  border-color: var(--accent);
+}
+.cal-tracked {
+  background: color-mix(in srgb, var(--heat-3) 28%, var(--surface-2));
+}
+.cal-other {
+  background: color-mix(in srgb, var(--heat-other) 30%, var(--surface-2));
+}
+.cal-marked {
+  background: color-mix(in srgb, var(--danger) 18%, var(--surface-2));
+}
+.cal-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--heat-3);
+}
+.cal-other .cal-dot {
+  background: var(--heat-other);
+}
+.cal-swatch-marked {
+  background: color-mix(in srgb, var(--danger) 40%, var(--surface-2));
 }

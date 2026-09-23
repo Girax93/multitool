@@ -24,7 +24,9 @@ import {
   updateDay,
   updateExerciseDayStyle,
   updateFootnote,
+  pageTabLabel,
   updateSet,
+  weekNumbers,
   weekSummary,
   type CellStyle,
   type SetCell,
@@ -34,6 +36,7 @@ import {
 import type { ViewPref, WorkoutService } from './service.js';
 import { disposeSession, renderSession } from './session.js';
 import { renderWorkoutSettings } from './settings-view.js';
+import { renderStats, resetStatsView } from './stats-view.js';
 
 /** The mounted root, so inline editing can find cells again after a re-render. */
 let root: HTMLElement | null = null;
@@ -60,7 +63,7 @@ export function mountWorkoutView(host: HTMLElement, ctx: ToolContext, service: W
       commitInline();
       const before = host.querySelector<HTMLElement>('.wk-scroll');
       const scroll = before ? { top: before.scrollTop, left: before.scrollLeft } : null;
-      replace(host, sub === 'settings' ? renderWorkoutSettings(service, ctx) : sub === 'session' ? renderSession(service, ctx) : renderLog(service, ctx));
+      replace(host, sub === 'settings' ? renderWorkoutSettings(service, ctx) : sub === 'session' ? renderSession(service, ctx) : sub === 'stats' ? renderStats(service) : renderLog(service, ctx));
       const after = host.querySelector<HTMLElement>('.wk-scroll');
       if (after) {
         if (navigated) {
@@ -90,9 +93,10 @@ export function mountWorkoutView(host: HTMLElement, ctx: ToolContext, service: W
       render();
     }),
   );
-  // Re-render the log (and workout mode) whenever data changes (cheap: grids are small).
-  const live = (): boolean => sub === '' || sub === 'session';
+  // Re-render the log (workout mode, stats) whenever data changes (cheap: grids are small).
+  const live = (): boolean => sub === '' || sub === 'session' || sub === 'stats';
   unsubs.push(service.weeks.subscribe(() => live() && render(), false));
+  unsubs.push(service.stats.subscribe(() => sub === 'stats' && render(), false));
   unsubs.push(
     service.currentWeekId.subscribe(() => {
       navigated = true;
@@ -134,6 +138,7 @@ export function mountWorkoutView(host: HTMLElement, ctx: ToolContext, service: W
       for (const u of unsubs) u();
       closeAllSheets();
       disposeSession();
+      resetStatsView();
       if (root === host) root = null;
     },
   };
@@ -184,6 +189,7 @@ function renderLog(service: WorkoutService, ctx: ToolContext): HTMLElement {
         svg(icons.play, 'icon icon-sm'),
         'Workout',
       ),
+      h('button', { class: 'btn btn-sm wk-session-btn', dataset: { testid: 'stats-open' }, title: 'Stats: activity map, calendar, progression', onClick: () => navigate(toolPath('workout', 'stats')) }, svg(icons.chart, 'icon icon-sm'), 'Stats'),
       renderViewControl(service, view),
     ),
   );
@@ -208,21 +214,16 @@ export function visibleWeeks(weeks: Week[], current: Week, view: ViewPref): Week
   return weeks.slice(start, start + view.per);
 }
 
-/** "Week 12" → 12; otherwise the 1-based position, so tabs can read "1–3". */
-function weekNumber(weeks: Week[], w: Week): number {
-  const m = /(\d+)\s*$/.exec(w.label);
-  return m && m[1] ? parseInt(m[1], 10) : weeks.indexOf(w) + 1;
-}
-
 function renderPageTabs(service: WorkoutService, weeks: Week[], current: Week, per: number): HTMLElement {
   const idx = Math.max(0, weeks.findIndex((w) => w.id === current.id));
   const active = Math.floor(idx / per);
+  const numbers = weekNumbers(weeks);
   const tabs = h('div', { class: 'wk-tabs', role: 'tablist', dataset: { testid: 'week-tabs' } });
   for (let start = 0, page = 0; start < weeks.length; start += per, page++) {
-    const first = weeks[start];
-    const last = weeks[Math.min(start + per, weeks.length) - 1];
-    if (!first || !last) continue;
-    const label = first === last ? String(weekNumber(weeks, first)) : `${weekNumber(weeks, first)}–${weekNumber(weeks, last)}`;
+    const slice = weeks.slice(start, start + per);
+    const first = slice[0];
+    if (!first) continue;
+    const label = pageTabLabel(numbers, slice);
     tabs.appendChild(
       h(
         'button',

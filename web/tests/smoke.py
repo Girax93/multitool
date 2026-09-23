@@ -352,8 +352,39 @@ def main() -> int:
             page.screenshot(path=str(SHOTS / "12-workout-mode.png"))
             page.click("[data-testid='session-off']")
             expect(panel).to_have_attribute("data-phase", "idle")
+            expect(page.locator("[data-testid='session-duration']")).to_contain_text("Workout so far")  # the countdown was booked on today's row
             page.click("[data-testid='session-back']")
             expect(page.locator("[data-testid='workout-grid']")).to_be_visible()
+
+            # stats: activity map, calendar, charts; the range switches between last N weeks and all
+            page.click("[data-testid='stats-open']")
+            expect(page.locator("[data-testid='stats']")).to_be_visible()
+            expect(page.locator("[data-testid='stats-tiles']")).to_contain_text("workouts")
+            expect(page.locator("[data-testid='stats-heatmap'] rect.hm-cell").first).to_be_visible()
+            expect(page.locator("[data-testid='stats-heatmap'] rect.hm-t4")).to_have_count(1)  # Tuesday's sets, this week
+            expect(page.locator("[data-testid='cal-title']")).to_contain_text(str(datetime.date.today().year))
+            expect(page.locator("[data-testid='chart-days'] svg rect.chart-bar")).to_have_count(1)
+            expect(page.locator("[data-testid='stats-exercise-select']")).to_be_visible()
+            expect(page.locator("[data-testid='chart-weight'] svg circle.chart-marker")).to_have_count(1)  # 97.1 kg on Tuesday
+            page.click("[data-testid='stats-all']")
+            expect(page.locator("[data-testid='stats-all']")).to_have_class(re.compile(r"seg-active"))
+            page.click("[data-testid='cal-prev']")
+            page.click("[data-testid='cal-next']")
+            page.screenshot(path=str(SHOTS / "13-stats.png"))
+            page.locator("[data-testid='stats-heatmap'] rect.hm-t4").click()  # a day on the map opens its week in the log
+            expect(page.locator("[data-testid='workout-grid']")).to_be_visible()
+            expect(page.locator("tbody tr").nth(0).locator("td.wk-cell").nth(0)).to_have_text("8")
+
+            # "delete" a day that has happened: it is cleared and stays as a red no-workout row
+            tue_row = page.locator("[data-testid='workout-grid'] tbody tr").nth(0)
+            tue_row.locator("[data-testid='day-header']").click()
+            page.click("[data-testid='day-clear']")
+            page.locator(".sheet-panel .btn-danger", has_text="Mark as no workout").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            expect(page.locator("[data-testid='workout-grid'] tbody tr")).to_have_count(3)
+            expect(tue_row.locator("td.wk-cell").nth(0)).to_have_text("")
+            expect(tue_row.locator("th")).to_have_class(re.compile(r"wk-tinted"))
+            expect(tue_row.locator("[data-testid='day-header']")).not_to_contain_text("97.1 kg")
 
             # light theme render
             light = browser.new_context(viewport=PHONE, color_scheme="light")

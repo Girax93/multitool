@@ -5,6 +5,9 @@ import {
   addDay,
   addExercise,
   addFootnote,
+  clearDay,
+  clearWeek,
+  dayHasHappened,
   displayFootnotes,
   emptyDuplicateWeeks,
   emptySetIndexes,
@@ -26,6 +29,7 @@ import {
   nextFootnoteNumber,
   nextWeekLabelFrom,
   numberedFootnotes,
+  pageTabLabel,
   parseLegacyCell,
   parseWorkoutExport,
   removeExercise,
@@ -42,7 +46,9 @@ import {
   updateExerciseDayStyle,
   updateFootnote,
   updateSet,
+  weekHasBegun,
   weekHasContent,
+  weekNumbers,
   weekSummary,
   weekdayOfDate,
   type Week,
@@ -382,3 +388,67 @@ test('workout mode helpers: today\'s week and day, timed exercises, seconds', ()
   assert.deepEqual(parsed.remove, ['import-gap-1']);
 });
 
+
+test('deleting a day or week that has happened clears it and marks it as no workout', () => {
+  let w = baseWeek();
+  w = updateSet(w, 'd1', 'squat', 0, { v: '8', c: 'green' });
+  w = updateDay(w, 'd1', { bodyweight: 86, notes: 'tired', marks: '*', alt: undefined });
+  w = updateDay(w, 'd2', { alt: 'Run' });
+  w = addFootnote(w, 'squat', 'knee').week;
+  w = { ...w, notes: 'plan' };
+  const day = clearDay(w, 'd1');
+  const d1 = day.days.find((d) => d.id === 'd1')!;
+  assert.equal(d1.c, 'red');
+  assert.equal(d1.date, '2026-05-25');
+  assert.equal(d1.bodyweight, undefined);
+  assert.equal(d1.notes, undefined);
+  assert.equal(d1.marks, undefined);
+  assert.deepEqual(d1.cells['squat']?.sets, [{ v: '' }, { v: '' }, { v: '' }]);
+  assert.equal(day.days.length, 3, 'the row stays');
+  assert.equal(day.notes, 'plan', 'clearing a day leaves the week alone');
+
+  const week = clearWeek(w, '2026-05-27'); // "today" is the Wednesday of that week
+  assert.equal(week.label, 'Week 22');
+  assert.equal(week.startDate, '2026-05-25');
+  assert.deepEqual(week.exercises.map((e) => e.id), ['squat', 'rows'], 'exercises stay for the next week to copy');
+  assert.equal(week.notes, undefined);
+  assert.deepEqual(week.footnotes, {});
+  assert.deepEqual(
+    week.days.map((d) => [d.weekday, d.c ?? null, d.alt ?? null]),
+    [
+      ['Mon', 'red', null],
+      ['Wed', 'red', null],
+      ['Fri', null, null], // still ahead: cleared, not marked
+    ],
+  );
+  assert.equal(weekHasContent(clearWeek(w)), true, 'a cleared past week keeps its red days (they count as content for the log)');
+  assert.deepEqual(clearWeek(w).days.map((d) => d.c), ['red', 'red', 'red']);
+
+  assert.equal(dayHasHappened(d1, '2026-05-25'), true);
+  assert.equal(dayHasHappened(d1, '2026-05-24'), false);
+  assert.equal(dayHasHappened({ ...d1, date: undefined }, '2020-01-01'), true);
+  assert.equal(weekHasBegun(w, '2026-05-25'), true);
+  assert.equal(weekHasBegun(w, '2026-05-24'), false);
+  assert.equal(weekHasBegun({ ...w, startDate: undefined }, '2020-01-01'), true);
+});
+
+test('week numbers: from the label, else from the nearest numbered week by calendar distance', () => {
+  const mk = (id: string, label: string, startDate?: string): Week => ({ id, label, startDate, createdAt: 0, exercises: [], days: [], footnotes: {} });
+  const weeks = [
+    mk('a', 'Week 79', '2026-08-03'),
+    mk('b', 'Week 80', '2026-08-10'),
+    mk('c', 'No workout', '2026-08-17'),
+    mk('d', 'No workout', '2026-08-24'),
+    mk('e', 'Week 83', '2026-08-31'),
+    mk('f', 'Sick', undefined),
+  ];
+  const n = weekNumbers(weeks);
+  assert.deepEqual(weeks.map((w) => [w.id, n.get(w.id)]), [['a', 79], ['b', 80], ['c', 81], ['d', 82], ['e', 83], ['f', 6]]);
+  // without any numbered week the position is used
+  assert.deepEqual([...weekNumbers([mk('x', 'Deload', '2026-01-05'), mk('y', 'Deload', '2026-01-12')]).values()], [1, 2]);
+  assert.equal(pageTabLabel(n, weeks.slice(0, 5)), '79–83');
+  assert.equal(pageTabLabel(n, [weeks[1]!]), '80');
+  // the old bug: an unnumbered week at the end of a page read "81–80"
+  const old = new Map([['b', 80], ['c', 81]]);
+  assert.equal(pageTabLabel(old, [weeks[2]!, weeks[1]!]), '80–81');
+});

@@ -50,7 +50,7 @@ export interface CellStyle {
 }
 
 export interface SetCell extends CellStyle {
-  /** Free text: "12", "6+4", "12!" — whatever the user typed. */
+  /** Free text: "12", "6+4", "12!" — whatever the user typed. Stored objects are `clean`ed, so an emptied cell may lack it. */
   v: string;
   /** Footnote numbers referenced by this set. */
   fn?: number[];
@@ -91,7 +91,26 @@ export interface DayEntry extends CellStyle {
   alt?: string;
   /** Keyed by exercise id. */
   cells: Record<string, ExerciseDay>;
+  /** How long the workout took, when it was logged through workout mode. */
+  session?: DaySession;
 }
+
+/**
+ * The span of a workout logged in workout mode: from the first set typed to
+ * the last set or countdown, plus how much of it was rest (every rest
+ * countdown as it actually ran, +30 s / −30 s and early Off included).
+ */
+export interface DaySession {
+  /** Epoch ms of the first activity. */
+  start: number;
+  /** Epoch ms of the latest activity. */
+  end: number;
+  /** Seconds spent in rest countdowns. */
+  restSec: number;
+}
+
+/** Activity more than this long after the last one starts a new session (a second workout that day). */
+export const SESSION_GAP_MS = 3 * 60 * 60 * 1000;
 
 export interface Footnote {
   /**
@@ -426,6 +445,84 @@ export function removeDay(week: Week, dayId: string): Week {
   return { ...week, days: week.days.filter((d) => d.id !== dayId) };
 }
 
+/** Legend id of the "did not do" colour, which marks days and weeks off. */
+export const NO_WORKOUT_COLOR = 'red';
+
+/**
+ * "Delete" for a day that has (or is) happening: everything logged on it goes,
+ * but the row stays and is marked red, so the week still shows the day off and
+ * the calendar / graphs count it (Ari tracks the days he did not train, too).
+ */
+export function clearDay(week: Week, dayId: string, mark = true): Week {
+  return withDay(week, dayId, (d) => {
+    const cells: Record<string, ExerciseDay> = {};
+    for (const ex of week.exercises) cells[ex.id] = { sets: emptySets(ex.sets) };
+    const next: DayEntry = { id: d.id, weekday: d.weekday, cells };
+    if (d.date) next.date = d.date;
+    if (mark) next.c = NO_WORKOUT_COLOR;
+    return next;
+  });
+}
+
+/**
+ * "Delete" for a week that has begun: it becomes a no-workout week — every day
+ * cleared and marked red (days after `today` are only cleared), notes gone.
+ * Label, dates and the exercise list stay, so the number keeps its place and
+ * the next week can still copy the exercises.
+ */
+export function clearWeek(week: Week, today?: string): Week {
+  let w: Week = clean({ ...week, footnotes: {}, notes: undefined });
+  for (const d of week.days) w = clearDay(w, d.id, !today || !d.date || d.date <= today);
+  return w;
+}
+
+/** A day that has happened (or is today) — deleting it clears it instead of removing the row. */
+export function dayHasHappened(day: DayEntry, today: string): boolean {
+  return !day.date || day.date <= today;
+}
+
+/** A week that has begun — deleting it clears it instead of removing it. */
+export function weekHasBegun(week: Week, today: string): boolean {
+  return !week.startDate || week.startDate <= today;
+}
+
+/**
+ * The number of every week, for tabs and graphs: "Week 12" → 12; a week whose
+ * label carries no number (an old "No workout" gap) takes its number from the
+ * nearest numbered week by calendar distance (the week after Week 80 is 81),
+ * and only without any dates does it fall back to its 1-based position.
+ */
+export function weekNumbers(weeks: Week[]): Map<string, number> {
+  const out = new Map<string, number>();
+  const numbered: { n: number; start: string; idx: number }[] = [];
+  weeks.forEach((w, idx) => {
+    const m = /(\d+)\s*$/.exec(w.label.trim());
+    if (m && m[1]) {
+      const n = parseInt(m[1], 10);
+      out.set(w.id, n);
+      if (w.startDate) numbered.push({ n, start: w.startDate, idx });
+    }
+  });
+  weeks.forEach((w, idx) => {
+    if (out.has(w.id)) return;
+    let n = idx + 1;
+    if (w.startDate && numbered.length) {
+      const ref = numbered.reduce((a, b) => (Math.abs(b.idx - idx) < Math.abs(a.idx - idx) ? b : a));
+      n = ref.n + Math.round((fromIsoDate(w.startDate).getTime() - fromIsoDate(ref.start).getTime()) / (7 * 86_400_000));
+    }
+    out.set(w.id, n);
+  });
+  return out;
+}
+
+/** "71–80": the lowest and highest week number on a page of tabs (not first and last, which read "81–80" when an unnumbered week sits between them). */
+export function pageTabLabel(numbers: Map<string, number>, page: Week[]): string {
+  const ns = page.map((w) => numbers.get(w.id) ?? 0);
+  const lo = Math.min(...ns);
+  const hi = Math.max(...ns);
+  return lo === hi ? String(lo) : `${lo}–${hi}`;
+}
+
 /**
  * Move a training day to another weekday (trained Tuesday instead of Monday).
  * The date follows from the week's start date; the row keeps its sets and notes.
@@ -438,6 +535,28 @@ export function setDayWeekday(week: Week, dayId: string, weekday: Weekday): Week
   else if (day.date) patch.date = addDays(day.date, weekdayOffset(weekday) - weekdayOffset(day.weekday));
   const next = updateDay(week, dayId, patch);
   return { ...next, days: sortDays(next.days) };
+}
+
+/**
+ * Note activity on a day's workout: the first activity opens the session,
+ * every later one moves its end and adds the rest just taken. A gap longer
+ * than SESSION_GAP_MS starts a fresh session (the earlier one is dropped: the
+ * day holds one workout).
+ */
+export function touchSession(week: Week, dayId: string, now: number, restSec = 0): Week {
+  return withDay(week, dayId, (d) => {
+    const cur = d.session;
+    const session: DaySession =
+      cur && now - cur.end <= SESSION_GAP_MS && now >= cur.start
+        ? { start: cur.start, end: Math.max(cur.end, now), restSec: Math.round(cur.restSec + restSec) }
+        : { start: now, end: now, restSec: Math.round(restSec) };
+    return { ...d, session };
+  });
+}
+
+/** Minutes a logged workout took (undefined when it was not timed). */
+export function sessionMinutes(day: DayEntry): number | undefined {
+  return day.session ? Math.round((day.session.end - day.session.start) / 60_000) : undefined;
 }
 
 /** Set a day's date; the weekday follows (an empty date only clears the date). */
@@ -579,7 +698,7 @@ export function parseLegacyCell(text: string): SetCell {
 
 /** A day counts as trained when a set was logged or another workout was done instead. */
 export function dayTrained(d: DayEntry): boolean {
-  return !!d.alt?.trim() || Object.values(d.cells).some((ed) => ed.sets.some((s) => s.v.trim() !== ''));
+  return !!d.alt?.trim() || Object.values(d.cells).some((ed) => ed.sets.some((s) => (s.v ?? '').trim() !== ''));
 }
 
 export function weekSummary(week: Week): string {

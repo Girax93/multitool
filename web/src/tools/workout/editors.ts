@@ -12,6 +12,9 @@ import {
   addExercise,
   addFootnote,
   clean,
+  clearDay,
+  clearWeek,
+  dayHasHappened,
   footnotesFor,
   getSet,
   isNumbered,
@@ -23,12 +26,14 @@ import {
   removeFootnote,
   setDayDate,
   setDayWeekday,
+  toIsoDate,
   toggleRef,
   updateDay,
   updateExercise,
   formatSeconds,
   parseSeconds,
   updateExerciseDayStyle,
+  weekHasBegun,
   updateFootnote,
   updateSet,
   type CellStyle,
@@ -431,20 +436,40 @@ export function openDayEditor(service: WorkoutService, weekId: string, dayId: st
       h(
         'div',
         { class: 'row row-between sheet-actions' },
-        h(
-          'button',
-          {
-            type: 'button',
-            class: 'btn btn-text btn-danger-text',
-            onClick: async () => {
-              if (await confirmSheet(`Remove ${day.weekday} from this week? Its sets will be lost.`, 'Remove day')) {
-                service.update(weekId, (x) => removeDay(x, dayId));
-                sheet.close();
-              }
-            },
-          },
-          'Remove day',
-        ),
+        // A day that has happened is never removed: "delete" clears it and marks
+        // it red, so the week (and the calendar) keep showing the day off. A day
+        // still ahead is simply taken out of the week.
+        dayHasHappened(day, toIsoDate(new Date()))
+          ? h(
+              'button',
+              {
+                type: 'button',
+                class: 'btn btn-text btn-danger-text',
+                dataset: { testid: 'day-clear' },
+                onClick: async () => {
+                  if (await confirmSheet(`Clear ${day.weekday}? Everything logged on it is removed and the day stays in the week, marked as no workout.`, 'Mark as no workout')) {
+                    service.update(weekId, (x) => clearDay(x, dayId));
+                    sheet.close();
+                  }
+                },
+              },
+              'No workout (clear day)',
+            )
+          : h(
+              'button',
+              {
+                type: 'button',
+                class: 'btn btn-text btn-danger-text',
+                dataset: { testid: 'day-remove' },
+                onClick: async () => {
+                  if (await confirmSheet(`Remove ${day.weekday} from this week?`, 'Remove day')) {
+                    service.update(weekId, (x) => removeDay(x, dayId));
+                    sheet.close();
+                  }
+                },
+              },
+              'Remove day',
+            ),
         h('button', { type: 'button', class: 'btn btn-primary', onClick: () => sheet.close() }, 'Done'),
       ),
     );
@@ -625,7 +650,7 @@ export function openWeekEditor(service: WorkoutService, ctx: ToolContext, weekId
         if (box.checked) {
           service.update(weekId, (x) => addDay(x, uid('d'), wd));
         } else if (existing) {
-          const hasData = Object.values(existing.cells).some((ed) => ed.sets.some((s) => s.v.trim() !== ''));
+          const hasData = Object.values(existing.cells).some((ed) => ed.sets.some((s) => (s.v ?? '').trim() !== ''));
           if (hasData && !(await confirmSheet(`${wd} has sets logged. Remove it anyway?`, 'Remove day'))) {
             box.checked = true;
             return;
@@ -648,21 +673,42 @@ export function openWeekEditor(service: WorkoutService, ctx: ToolContext, weekId
       h(
         'div',
         { class: 'row row-between sheet-actions' },
-        h(
-          'button',
-          {
-            type: 'button',
-            class: 'btn btn-text btn-danger-text',
-            onClick: async () => {
-              if (await confirmSheet(`Delete ${w.label} and everything logged in it?`, 'Delete week')) {
-                await service.deleteWeek(weekId);
-                ctx.toast('Week deleted');
-                sheet.close();
-              }
-            },
-          },
-          'Delete week',
-        ),
+        // A week that has begun stays in the log as a no-workout week (Ari
+        // tracks the weeks he did not train): "delete" clears it and marks its
+        // days red. A week that has not started yet is removed for real.
+        weekHasBegun(w, toIsoDate(new Date()))
+          ? h(
+              'button',
+              {
+                type: 'button',
+                class: 'btn btn-text btn-danger-text',
+                dataset: { testid: 'week-clear' },
+                onClick: async () => {
+                  if (await confirmSheet(`Clear ${w.label}? Everything logged in it is removed; the week stays as a no-workout week with its number and dates.`, 'Mark as no workout')) {
+                    service.update(weekId, (x) => clearWeek(x, toIsoDate(new Date())));
+                    ctx.toast(`${w.label} marked as no workout`);
+                    sheet.close();
+                  }
+                },
+              },
+              'No workout (clear week)',
+            )
+          : h(
+              'button',
+              {
+                type: 'button',
+                class: 'btn btn-text btn-danger-text',
+                dataset: { testid: 'week-delete' },
+                onClick: async () => {
+                  if (await confirmSheet(`Delete ${w.label}? It has not started yet, so it is removed entirely.`, 'Delete week')) {
+                    await service.deleteWeek(weekId);
+                    ctx.toast('Week deleted');
+                    sheet.close();
+                  }
+                },
+              },
+              'Delete week',
+            ),
         h('button', { type: 'button', class: 'btn btn-primary', onClick: () => sheet.close() }, 'Done'),
       ),
     );
