@@ -15,6 +15,13 @@ export function closePopover(): void {
   current?.close();
 }
 
+let keepOpenUntil = 0;
+
+/** A programmatic scroll is about to happen (a re-render restoring its scroll position): do not close the menu for it. */
+export function keepPopoverThroughScroll(ms = 150): void {
+  keepOpenUntil = performance.now() + ms;
+}
+
 export function openPopover(x: number, y: number, ...children: Child[]): Popover {
   closePopover();
   const el = h('div', { class: 'popover', role: 'menu', dataset: { testid: 'popover' } }, ...children);
@@ -38,6 +45,9 @@ export function openPopover(x: number, y: number, ...children: Child[]): Popover
     if (e.key === 'Escape') close();
   };
   const onScroll = (e: Event): void => {
+    // A view that re-renders and puts its scroll position back fires a scroll
+    // event too; that one keeps the menu where it was, so it stays open.
+    if (performance.now() < keepOpenUntil) return;
     if (!el.contains(e.target as Node)) close();
   };
   const close = (): void => {

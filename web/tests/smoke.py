@@ -143,11 +143,16 @@ def main() -> int:
             expect(page.locator("[data-testid='workout-empty']")).to_be_visible()
             page.click("[data-testid='workout-start']")
             expect(page.locator(".sheet-panel")).to_be_visible()
+            # "Add exercise" opens the library picker; a blank row is one tap away, a library pick fills name / sets / link
             page.click("[data-testid='exercise-add']")
+            page.click("[data-testid='library-blank']")
             page.locator("[data-testid='exercise-name']").nth(0).fill("Pistol Squats")
             page.click("[data-testid='exercise-add']")
+            page.click("[data-testid='library-blank']")
             page.locator("[data-testid='exercise-name']").nth(1).fill("Dumbbell Rows")
             page.locator("[data-testid='exercise-weight']").nth(1).fill("24kg")
+            expect(page.locator("[data-testid='exercise-lib']").nth(0)).to_have_value("")  # matched by name, no explicit link
+            expect(page.locator("[data-testid='exercise-lib']").nth(0).locator("option").first).to_contain_text("Pistol Squats (matched by name)")
             page.screenshot(path=str(SHOTS / "08-workout-exercises.png"))
             page.click(".sheet-panel .btn-primary")  # Done
             expect(page.locator(".sheet-panel")).to_have_count(0)
@@ -304,6 +309,18 @@ def main() -> int:
             page.click("[data-testid='menu-settings']")
             expect(page.locator("[data-testid='workout-settings']")).to_be_visible()
             page.screenshot(path=str(SHOTS / "11-workout-settings.png"))
+            # exercise library: built-ins are listed; a new one can be added with muscles and a bodyweight share
+            expect(page.locator("[data-testid='library-row'][data-lib='push-ups']")).to_contain_text("64 % of bodyweight")
+            page.click("[data-testid='library-add']")
+            page.fill("[data-testid='lib-name']", "Nordic Curls")
+            page.locator(".sheet-panel .chip-primary", has_text="Hamstrings").click()
+            page.locator(".sheet-panel .chip-secondary", has_text="Glutes").click()
+            page.fill("[data-testid='lib-factor']", "70")
+            page.locator("[data-testid='lib-factor']").dispatch_event("change")
+            page.screenshot(path=str(SHOTS / "11b-library-editor.png"))
+            page.click("[data-testid='lib-done']")
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            expect(page.locator("[data-testid='library-row'][data-lib='nordic-curls']")).to_contain_text("Hamstrings + Glutes · 70 % of bodyweight")
 
             # importing a week whose label an empty, hand-made week already carries replaces that week
             page.go_back()
@@ -366,8 +383,17 @@ def main() -> int:
             expect(page.locator("[data-testid='chart-days'] svg rect.chart-bar")).to_have_count(1)
             expect(page.locator("[data-testid='stats-exercise-select']")).to_be_visible()
             expect(page.locator("[data-testid='chart-weight'] svg circle.chart-marker")).to_have_count(1)  # 97.1 kg on Tuesday
-            page.click("[data-testid='stats-all']")
-            expect(page.locator("[data-testid='stats-all']")).to_have_class(re.compile(r"seg-active"))
+            page.click("[data-testid='stats-all-all']")
+            expect(page.locator("[data-testid='stats-all-all']")).to_have_class(re.compile(r"chip-active"))
+            expect(page.locator("[data-testid='range-days-all']")).to_have_class(re.compile(r"chip-active"))  # every card follows
+            page.click("[data-testid='range-days-3']")  # one card on its own range
+            expect(page.locator("[data-testid='range-days-3']")).to_have_class(re.compile(r"chip-active"))
+            expect(page.locator("[data-testid='range-volume-all']")).to_have_class(re.compile(r"chip-active"))
+            expect(page.locator("[data-testid='stats-days'] .card-range")).to_contain_text("Same as all cards")
+            expect(page.locator("[data-testid='donut-days'] .donut-row").first).to_be_visible()
+            expect(page.locator("[data-testid='stats-muscles'] .chip-muscle").first).to_be_visible()  # Pistol Squats matched → quads etc.
+            expect(page.locator("[data-testid='chart-volume'] svg .chart-axis-title").first).to_contain_text("sets")
+            expect(page.locator("[data-testid='chart-volume'] svg .chart-axis-title").last).to_contain_text("Week number")
             page.click("[data-testid='cal-prev']")
             page.click("[data-testid='cal-next']")
             page.screenshot(path=str(SHOTS / "13-stats.png"))

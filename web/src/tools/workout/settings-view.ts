@@ -6,6 +6,8 @@ import type { ToolContext } from '../../core/registry.js';
 import { navigate, toolPath } from '../../core/router.js';
 import { icons } from '../../ui/icons.js';
 import { WEEKDAYS, exportWeeks, formatSeconds, parseSeconds, parseWorkoutExport, type LegendEntry, type MarkDef, type SessionSettings, type Weekday } from './model.js';
+import { openLibraryEditor } from './editors.js';
+import { describeEntry } from './library.js';
 import type { WorkoutService } from './service.js';
 
 function section(title: string, ...children: (HTMLElement | null)[]): HTMLElement {
@@ -61,6 +63,38 @@ export function renderWorkoutSettings(service: WorkoutService, ctx: ToolContext)
     sessionField('stepSec', '+ / − step', 'the +30 s / −30 s buttons'),
     sessionField('workSec', 'Work time for timed sets', 'default for new timed exercises, e.g. handstands'),
     h('div', { class: 'list-row' }, h('label', { class: 'list-main' }, h('span', { class: 'list-title' }, 'Offer timed exercises'), h('span', { class: 'list-sub' }, 'After the rest of the exercise before a timed one, ask to start it')), h('label', { class: 'switch' }, offer, h('span', { class: 'switch-track' }))),
+  );
+
+  // ---- exercise library
+  const libList = h('div', { class: 'list' });
+  const renderLibrary = (): void => {
+    const lib = [...service.settings.get().library].sort((a, b) => a.name.localeCompare(b.name));
+    replace(
+      libList,
+      ...lib.map((e) =>
+        h(
+          'button',
+          { type: 'button', class: 'list-row list-btn', dataset: { testid: 'library-row', lib: e.id }, onClick: () => openLibraryEditor(service, e.id, renderLibrary) },
+          h('span', { class: 'list-main' }, h('span', { class: 'list-title' }, e.name), h('span', { class: 'list-sub' }, describeEntry(e))),
+          svg(icons.chevronRight, 'icon icon-sm'),
+        ),
+      ),
+    );
+  };
+  renderLibrary();
+  const removedCount = s.libraryRemoved.length;
+  const libraryCard = section(
+    'Exercises',
+    h('p', { class: 'muted' }, 'The exercises the stats know: which muscles they work (a set counts fully for the main ones, half for the helpers) and how much weight one rep moves — the dumbbell, or a share of your bodyweight. Weeks link their exercises here by name; edit any number.'),
+    libList,
+    h(
+      'div',
+      { class: 'row' },
+      h('button', { class: 'btn btn-sm', dataset: { testid: 'library-add' }, onClick: () => openLibraryEditor(service, undefined, renderLibrary) }, svg(icons.plus), 'Add exercise'),
+      removedCount
+        ? h('button', { class: 'btn btn-sm btn-text', onClick: () => void service.updateSettings({ libraryRemoved: [] }).then(renderLibrary) }, `Restore ${removedCount} built-in`)
+        : null,
+    ),
   );
 
   // ---- legend
@@ -204,6 +238,7 @@ export function renderWorkoutSettings(service: WorkoutService, ctx: ToolContext)
     h('button', { class: 'btn btn-text btn-back', onClick: () => navigate(toolPath('workout')) }, svg(icons.back), 'Back to the log'),
     general,
     sessionCard,
+    libraryCard,
     legend,
     marks,
     data,

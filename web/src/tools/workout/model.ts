@@ -6,6 +6,8 @@
 // Excel-style colour / star / mark annotations that can sit on any cell, on an
 // exercise-for-a-day, or on a whole day. All updates are immutable.
 
+import { DEFAULT_LIBRARY, mergeLibrary, type LibraryExercise } from './library.js';
+
 export type Weekday = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
 export const WEEKDAYS: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -41,6 +43,10 @@ export interface WorkoutSettings {
   legend: LegendEntry[];
   marks: MarkDef[];
   session: SessionSettings;
+  /** Exercise library (muscle groups, load per rep); built-ins merged in by id. */
+  library: LibraryExercise[];
+  /** Built-in library ids the user deleted (so merging does not bring them back). */
+  libraryRemoved: string[];
 }
 
 /** Colour / star annotation. `c` is a legend id. */
@@ -71,6 +77,8 @@ export interface Exercise extends CellStyle {
    * work, which workout mode counts down before the rest. Absent = reps.
    */
   timedSec?: number;
+  /** Library entry this exercise is (muscle groups, load); matched by name when absent. */
+  lib?: string;
 }
 
 export interface DayEntry extends CellStyle {
@@ -163,12 +171,15 @@ export const DEFAULT_SETTINGS: WorkoutSettings = {
   legend: DEFAULT_LEGEND,
   marks: DEFAULT_MARKS,
   session: DEFAULT_SESSION,
+  library: DEFAULT_LIBRARY,
+  libraryRemoved: [],
 };
 
 /** Stored settings may predate a field (or hold a partial `session`): fill in the defaults. */
 export function mergeSettings(stored: Partial<WorkoutSettings> | null | undefined): WorkoutSettings {
   const s = stored ?? {};
-  return { ...DEFAULT_SETTINGS, ...s, session: { ...DEFAULT_SESSION, ...(s.session ?? {}) } };
+  const removed = s.libraryRemoved ?? [];
+  return { ...DEFAULT_SETTINGS, ...s, session: { ...DEFAULT_SESSION, ...(s.session ?? {}) }, library: mergeLibrary(s.library, removed), libraryRemoved: removed };
 }
 
 // ---- Dates -----------------------------------------------------------------
@@ -251,7 +262,7 @@ export function newWeek(input: NewWeekInput): Week {
     else startDate = mondayOf(new Date(input.now));
   }
   const exercises: Exercise[] = previous
-    ? previous.exercises.map((e) => clean({ id: e.id, name: e.name, weight: e.weight, sets: e.sets, timedSec: e.timedSec }))
+    ? previous.exercises.map((e) => clean({ id: e.id, name: e.name, weight: e.weight, sets: e.sets, timedSec: e.timedSec, lib: e.lib }))
     : [];
   const days = settings.defaultDays.map((wd, i) => newDay(input.dayIds[i] ?? `${input.id}-${wd}`, wd, startDate, exercises));
   return {
@@ -515,11 +526,16 @@ export function weekNumbers(weeks: Week[]): Map<string, number> {
   return out;
 }
 
-/** "71–80": the lowest and highest week number on a page of tabs (not first and last, which read "81–80" when an unnumbered week sits between them). */
-export function pageTabLabel(numbers: Map<string, number>, page: Week[]): string {
-  const ns = page.map((w) => numbers.get(w.id) ?? 0);
-  const lo = Math.min(...ns);
-  const hi = Math.max(...ns);
+/**
+ * "71–80": a page tab names the weeks by their position in the log (1-based),
+ * so the tabs always run on without gaps or overlaps — labels can be
+ * inconsistent (Ari's older import numbers "Week 79" and "Week 80" six
+ * calendar weeks apart, with unnumbered "No workout" weeks between them) and
+ * still every calendar week is one entry, so the position is the week number.
+ */
+export function pageTabLabel(start: number, count: number): string {
+  const lo = start + 1;
+  const hi = start + count;
   return lo === hi ? String(lo) : `${lo}–${hi}`;
 }
 

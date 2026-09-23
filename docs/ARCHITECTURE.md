@@ -66,6 +66,10 @@ flank the grid in 1-week mode; below that a slim bar above each grid carries
 the arrows, the label and the menu so they stay reachable on a phone. On wide
 screens the host drops its max-width so a full week fits without scrolling.
 
+A re-render that restores the grid's scroll position tells the context menu
+to ignore that scroll event (`keepPopoverThroughScroll`), so picking a colour
+in the menu does not close it.
+
 **Editing the grid.** A tap on a set cell, a notes cell, the week note or a
 note in the notes row edits it in place (`tools/workout/inline.ts`): Enter /
 Tab commit and move to the next set, Escape cancels, blur commits; what is
@@ -80,9 +84,13 @@ links (opened through the native bridge). A new week counts on from the
 highest numbered label ("Week 80" → "Week 81", past unnumbered gap weeks).
 Importing a file replaces weeks with the same id, drops empty hand-made weeks
 that only duplicate an imported week's label, and lands on the newest week.
-Page tabs read the lowest–highest week number on the page (`weekNumbers`
-derives a number for an unnumbered week from its calendar distance to the
-nearest numbered one). Ari tracks the weeks and days he did *not* train, so
+Page tabs name weeks by their position in the log ("71–80", "81–86"): labels
+can be inconsistent (an older import numbered "Week 79" and "Week 80" six
+calendar weeks apart with unnumbered gap weeks between them), but every
+calendar week is one entry, so the position is the week number. To keep it
+that way, "New week" also adds the calendar weeks skipped since the latest
+entry as no-workout weeks (red days, toast "Week 87 added as a no-workout
+week"). Ari tracks the weeks and days he did *not* train, so
 "delete" is not removal for anything that has happened: a day dated today or
 earlier is cleared and marked red (`clearDay`), a week that has begun becomes
 a no-workout week with its label, dates and exercise list kept (`clearWeek`,
@@ -112,22 +120,48 @@ rest countdowns add what they actually ran (+30 s, early Off and Repeat
 included), and activity more than three hours after the last one starts a new
 session — which is where the stats page gets workout durations from.
 
+**Exercise library** (`tools/workout/library.ts`, pure and unit-tested; edited
+in Settings → Exercises, stored in `settings.library` so it syncs, merged with
+the built-ins by id so edits win, deletions stick (`libraryRemoved`) and new
+built-ins arrive). An entry has muscle groups with a role (a set counts fully
+for a main mover, half for a helper — `roleWeight`), a load rule (`external`
+with 1 or 2 dumbbells moved at once, `bodyweight` with a share of the day's
+bodyweight plus whatever weight is written on the exercise, or `none` for a
+hold) and other names it had in the log. A week's exercise links to an entry
+with `Exercise.lib` (set when it is added from the picker, or chosen in the
+exercises editor); without a link the name matches by slug against the
+entry's id, name and aliases, which is how the imported history ("NO BENCH:
+Dumbbell Rows", "+1 step Chest Press") lands on the right entries. The
+bodyweight shares are rounded force-plate figures (push-up 64 %, feet
+elevated 75 %, knee 49 %, squat / pistol / lunge 85 %, dips and handstand
+push-ups 95 %, pull-ups 100 %, pike push-ups 60 %); each entry's note says so.
+
 **Stats** (`tools/workout/stats.ts` pure and unit-tested, `stats-view.ts` the
-page at `#/t/workout/stats`, `charts.ts` the SVG bars / lines with hover
-tooltips, crosshair and a two-tap select on touch). Everything is laid out
-over *calendar* weeks from the "Last N weeks / All" range (a per-device
-preference under `ui/stats`, like the log's view), so a week Ari skipped is a
-visible empty slot: a faint red column in the bar charts, a shaded band in the
-progression chart, dim cells in the activity map. The page shows headline
-tiles, a GitHub-style activity map (greens by sets done, orange for "other"
-workouts, dim for days off; days ahead are not drawn), a month calendar with
-Ari's week numbers, days per week, one exercise's progression (best set /
-total reps / volume / weight / sets done, exercises matched by id across
-weeks, the week's name shown in the tooltip when it drifted), bodyweight and
-workout duration (working vs rest). Set cells are read with `parseSetValue`
-("12!" → 12, "6+4" → 10, "9,3" → 9, "12(20)" → 12 at 20 kg, "-" / "✗" = not
-done) and plan weights with `parseWeight` ("26kg → 18kg" → 18). Tapping a day
-or a bar opens that week in the log.
+page at `#/t/workout/stats`, `charts.ts` the SVG bars / lines / donuts).
+Everything is laid out over *calendar* weeks, so a week Ari skipped is a
+visible empty slot: a faint red column in the bar charts, a shaded band in
+the line charts, dim cells in the activity map. Every card has its own range
+(chips 1 wk · 3 wk · 1 mo · 3 mo · 6 mo · 1 yr · All · any number of weeks;
+the header's row sets all cards at once; per device under `ui/stats`
+together with each card's metric choices). Cards: overview tiles with a days
+donut (tracked / other / none); a GitHub-style activity map (greens by sets
+done, orange for "other" workouts, dim for days off; days ahead not drawn); a
+month calendar with Ari's week numbers; workout days per week; training
+volume per week (sets / reps / kg moved); muscle groups over time (lines per
+group, sets or kg moved, chips choose the groups, colours fixed per group);
+muscle groups share and exercises share (donuts); one exercise's progression
+(best set / total reps / volume / weight / sets done; exercises folded into
+their library entry, the week's own name in the tooltip); bodyweight over
+dates; workout duration (working vs rest, bars and a donut). Every axis
+carries its title ("Week number", "sets", "kg moved"); bar and line charts
+over more than ~20 slots zoom and pan (− / + / ⟲ buttons, Ctrl + wheel,
+pinch, drag) with a "weeks 28–59" hint; tooltips follow the pointer, a
+crosshair on line charts, and on touch the first tap shows, the second opens
+the week in the log. Load per set = reps × `loadPerRep` (the library rule with
+the day's bodyweight, carried forward from the last weigh-in). Set cells are
+read with `parseSetValue` ("12!" → 12, "6+4" → 10, "9,3" → 9, "12(20)" → 12
+at 20 kg, "-" / "✗" = not done) and plan weights with `parseWeight`
+("26kg → 18kg" → 18).
 
 **Service worker** (`sw.js`, generated by the build) precaches every asset,
 serves cache-first, and falls back to `index.html` offline. The cache name

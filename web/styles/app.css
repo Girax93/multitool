@@ -30,6 +30,19 @@
   --heat-3: #26a641;
   --heat-4: #39d353;
   --heat-other: #d95926;
+  /* categorical (muscle groups, exercises): fixed order, one hue each */
+  --cat-1: #3987e5;
+  --cat-2: #d95926;
+  --cat-3: #3fb56f;
+  --cat-4: #a78bfa;
+  --cat-5: #2dd4bf;
+  --cat-6: #ec6fa8;
+  --cat-7: #e3b341;
+  --cat-8: #8b9cf3;
+  --cat-9: #c0864a;
+  --cat-10: #5ec8e5;
+  --cat-11: #9aa78b;
+  --chart-other: #6b7280;
   color-scheme: dark;
 }
 
@@ -53,6 +66,18 @@
     --heat-3: #30a14e;
     --heat-4: #216e39;
     --heat-other: #eb6834;
+    --cat-1: #2a78d6;
+    --cat-2: #eb6834;
+    --cat-3: #2e9e5b;
+    --cat-4: #8b5cf6;
+    --cat-5: #0f9d8a;
+    --cat-6: #d6408b;
+    --cat-7: #b8860b;
+    --cat-8: #5b6fd6;
+    --cat-9: #9a5f2a;
+    --cat-10: #1f8fb0;
+    --cat-11: #6b7a5c;
+    --chart-other: #9aa3ad;
     color-scheme: light;
   }
 }
@@ -75,6 +100,18 @@
   --heat-3: #30a14e;
   --heat-4: #216e39;
   --heat-other: #eb6834;
+  --cat-1: #2a78d6;
+  --cat-2: #eb6834;
+  --cat-3: #2e9e5b;
+  --cat-4: #8b5cf6;
+  --cat-5: #0f9d8a;
+  --cat-6: #d6408b;
+  --cat-7: #b8860b;
+  --cat-8: #5b6fd6;
+  --cat-9: #9a5f2a;
+  --cat-10: #1f8fb0;
+  --cat-11: #6b7a5c;
+  --chart-other: #9aa3ad;
   color-scheme: light;
 }
 
@@ -2044,4 +2081,210 @@ body:has(.sess-panel) .toasts {
 }
 .cal-swatch-marked {
   background: color-mix(in srgb, var(--danger) 40%, var(--surface-2));
+}
+
+/* ---- Stats v2: ranges per card, axis titles, zoom, donuts ---------------- */
+.stats-range-all {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-left: auto;
+}
+.stats-range-all-label {
+  font-size: 12px;
+}
+.range-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.chip-range {
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+.range-custom-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 6px 0 2px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+.range-custom-wrap.chip-active {
+  border-color: var(--accent);
+}
+.range-custom {
+  width: 48px;
+  min-height: 24px;
+  padding: 0 4px;
+  font-size: 12px;
+  border-radius: 999px;
+}
+.card-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-bottom: 10px;
+}
+.stats-sub {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 14px 0 6px;
+}
+.chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 4px;
+}
+.chart-head .chart-legend {
+  margin: 0;
+}
+.chart-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+.chart-view-hint {
+  font-size: 12px;
+  margin-right: 4px;
+}
+.chart-zoom-btn {
+  width: 28px;
+  height: 28px;
+  font-size: 15px;
+  font-weight: 600;
+}
+.chart-axis-title {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.chart-plot-zoomable {
+  touch-action: pan-y;
+  cursor: grab;
+}
+.chart-zoomed .chart-plot-zoomable {
+  cursor: grabbing;
+}
+.chip-muscle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* donut */
+.donut {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 24px;
+}
+.donut-svg {
+  flex: none;
+  font-family: var(--font);
+}
+.donut-slice {
+  stroke: var(--surface);
+  stroke-width: 2;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.donut-dim {
+  opacity: 0.35;
+}
+.donut-center {
+  fill: var(--text);
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.donut-center-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.donut-legend {
+  flex: 1 1 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.donut-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.donut-row-active {
+  background: var(--surface-2);
+}
+.donut-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.donut-value {
+  font-variant-numeric: tabular-nums;
+}
+.donut-pct {
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+}
+.donut-detail {
+  grid-column: 2 / -1;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* library lists: rows that are buttons */
+.list-btn {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  padding: 10px 4px;
+}
+.list-btn:first-child {
+  border-top: 0;
+}
+.list-btn .list-main {
+  flex: 1;
+  min-width: 0;
+}
+.list-btn .list-sub {
+  white-space: normal;
+}
+.ex-lib-row {
+  gap: 6px;
+}
+.ex-lib {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+}
+.input-sm {
+  min-height: 30px;
+  padding: 2px 8px;
 }

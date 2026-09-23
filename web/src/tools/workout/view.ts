@@ -6,7 +6,7 @@ import { h, replace, svg, type Child } from '../../core/dom.js';
 import type { ToolContext, ToolInstance } from '../../core/registry.js';
 import { currentRoute, navigate, onRouteChange, toolPath } from '../../core/router.js';
 import { icons } from '../../ui/icons.js';
-import { closePopover, onContextAction, openPopover } from '../../ui/popover.js';
+import { closePopover, keepPopoverThroughScroll, onContextAction, openPopover } from '../../ui/popover.js';
 import { closeAllSheets, confirmSheet, openSheet } from '../../ui/sheet.js';
 import { chip, openDayEditor, openExercisesEditor, openFootnoteEditor, openNotesEditor, openSetEditor, openWeekEditor, swatches } from './editors.js';
 import { cancelInline, commitInline, editInline, inlineTarget, type CommitVia } from './inline.js';
@@ -26,7 +26,6 @@ import {
   updateFootnote,
   pageTabLabel,
   updateSet,
-  weekNumbers,
   weekSummary,
   type CellStyle,
   type SetCell,
@@ -66,6 +65,7 @@ export function mountWorkoutView(host: HTMLElement, ctx: ToolContext, service: W
       replace(host, sub === 'settings' ? renderWorkoutSettings(service, ctx) : sub === 'session' ? renderSession(service, ctx) : sub === 'stats' ? renderStats(service) : renderLog(service, ctx));
       const after = host.querySelector<HTMLElement>('.wk-scroll');
       if (after) {
+        keepPopoverThroughScroll();
         if (navigated) {
           const id = service.currentWeekId.get();
           const section = id ? after.querySelector<HTMLElement>(`.wk-week[data-week="${CSS.escape(id)}"]`) : null;
@@ -217,13 +217,12 @@ export function visibleWeeks(weeks: Week[], current: Week, view: ViewPref): Week
 function renderPageTabs(service: WorkoutService, weeks: Week[], current: Week, per: number): HTMLElement {
   const idx = Math.max(0, weeks.findIndex((w) => w.id === current.id));
   const active = Math.floor(idx / per);
-  const numbers = weekNumbers(weeks);
   const tabs = h('div', { class: 'wk-tabs', role: 'tablist', dataset: { testid: 'week-tabs' } });
   for (let start = 0, page = 0; start < weeks.length; start += per, page++) {
     const slice = weeks.slice(start, start + per);
     const first = slice[0];
     if (!first) continue;
-    const label = pageTabLabel(numbers, slice);
+    const label = pageTabLabel(start, slice.length);
     tabs.appendChild(
       h(
         'button',

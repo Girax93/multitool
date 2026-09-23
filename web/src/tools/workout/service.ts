@@ -7,12 +7,14 @@ import { Emitter, signal, type Signal } from '../../core/store.js';
 import {
   DEFAULT_SETTINGS,
   addDays,
+  clearWeek,
   emptyDuplicateWeeks,
   mergeSettings,
   mondayOf,
   newWeek,
   nextWeekLabelFrom,
   sortWeeks,
+  toIsoDate,
   weekHasContent,
   type Week,
   type WorkoutSettings,
@@ -32,13 +34,24 @@ export interface ViewPref {
 }
 export const DEFAULT_VIEW: ViewPref = { mode: 'one', per: 3 };
 
-/** What the stats page reads from: the last N calendar weeks or everything. Per device, like the view. */
-export interface StatsPref {
+/** A stretch of calendar weeks: the last N, or everything since the first entry. */
+export interface RangeSpec {
   mode: 'last' | 'all';
   weeks: number;
-  /** Exercise id shown in the progression chart. */
+}
+
+/** What the stats page reads from, per device like the view: a default range and per-card overrides plus each card's choices. */
+export interface StatsPref extends RangeSpec {
+  /** Per-card ranges (card id → range); cards without one follow the default. */
+  ranges?: Record<string, RangeSpec>;
+  /** Exercise (library id) shown in the progression chart. */
   exercise?: string;
   metric?: string;
+  /** Muscle-group chart: metric and the groups drawn. */
+  muscleMetric?: 'sets' | 'load';
+  muscleGroups?: string[];
+  volumeMetric?: 'sets' | 'reps' | 'load';
+  shareMetric?: 'sets' | 'load';
 }
 export const DEFAULT_STATS: StatsPref = { mode: 'last', weeks: 13 };
 
@@ -134,6 +147,20 @@ export class WorkoutService {
     void this.ctx.kv.set(STATS_KEY, next);
   }
 
+  /** The range one stats card reads from: its own, else the page default. */
+  statsRangeFor(card: string): RangeSpec {
+    const p = this.stats.get();
+    return p.ranges?.[card] ?? { mode: p.mode, weeks: p.weeks };
+  }
+
+  /** Give one card its own range (undefined → back to the page default). */
+  setCardRange(card: string, range: RangeSpec | undefined): void {
+    const ranges = { ...(this.stats.get().ranges ?? {}) };
+    if (range) ranges[card] = { mode: range.mode, weeks: Math.min(520, Math.max(1, Math.round(range.weeks) || 1)) };
+    else delete ranges[card];
+    this.setStats({ ranges });
+  }
+
   /** Apply an immutable update to one week and persist it. */
   update(id: string, fn: (w: Week) => Week): Week | undefined {
     const before = this.get(id);
@@ -149,33 +176,53 @@ export class WorkoutService {
   /**
    * Start a new week after the latest one (exercises copied). Without a
    * start date it is the week after the latest one, or the current calendar
-   * week when that is later (weeks were skipped); the label counts calendar
-   * weeks since the highest numbered one.
+   * week when that is later; the label counts calendar weeks since the
+   * highest numbered one. Calendar weeks skipped in between are added as
+   * no-workout weeks (red days), because every calendar week is one entry
+   * with its number (Ari) — so the log's positions stay the week numbers.
    */
   createWeek(opts: { startDate?: string; label?: string; copyFrom?: Week } = {}): Week {
-    const list = this.weeks.get();
-    const previous = opts.copyFrom ?? list[list.length - 1];
+    let list = this.weeks.get();
+    let previous = opts.copyFrom ?? list[list.length - 1];
     const settings = this.settings.get();
     const thisMonday = mondayOf(new Date());
     let startDate = opts.startDate;
+    const filled: Week[] = [];
     if (!startDate) {
-      const after = previous?.startDate ? addDays(previous.startDate, 7) : thisMonday;
-      startDate = after < thisMonday ? thisMonday : after;
+      let after = previous?.startDate ? addDays(previous.startDate, 7) : thisMonday;
+      while (after < thisMonday) {
+        const gap = clearWeek(this.build(list, settings, previous, after), toIsoDate(new Date()));
+        list = sortWeeks([...list, gap]);
+        void this.ctx.kv.set(WEEK_PREFIX + gap.id, gap);
+        filled.push(gap);
+        previous = gap;
+        after = addDays(after, 7);
+      }
+      startDate = after;
     }
-    const week = newWeek({
+    const week = this.build(list, settings, previous, startDate, opts.label);
+    this.weeks.set(sortWeeks([...list, week]));
+    void this.ctx.kv.set(WEEK_PREFIX + week.id, week);
+    this.select(week.id);
+    this.updateStatus();
+    if (filled.length) {
+      const first = filled[0]?.label ?? '';
+      const last = filled[filled.length - 1]?.label ?? '';
+      this.ctx.toast(filled.length === 1 ? `${first} added as a no-workout week` : `${first} – ${last} added as no-workout weeks`, { durationMs: 6000 });
+    }
+    return week;
+  }
+
+  private build(list: Week[], settings: WorkoutSettings, previous: Week | undefined, startDate: string, label?: string): Week {
+    return newWeek({
       id: uid('wk'),
       dayIds: settings.defaultDays.map(() => uid('d')),
       now: Date.now(),
       settings,
       previous,
       startDate,
-      label: opts.label ?? nextWeekLabelFrom(list, startDate),
+      label: label ?? nextWeekLabelFrom(list, startDate),
     });
-    this.weeks.set(sortWeeks([...list, week]));
-    void this.ctx.kv.set(WEEK_PREFIX + week.id, week);
-    this.select(week.id);
-    this.updateStatus();
-    return week;
   }
 
   async deleteWeek(id: string): Promise<void> {
@@ -187,7 +234,7 @@ export class WorkoutService {
   }
 
   async updateSettings(patch: Partial<WorkoutSettings>): Promise<void> {
-    const next = { ...this.settings.get(), ...patch };
+    const next = mergeSettings({ ...this.settings.get(), ...patch });
     this.settings.set(next);
     await this.ctx.kv.set(SETTINGS_KEY, next);
   }

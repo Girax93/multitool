@@ -1,9 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_SETTINGS, addExercise, newWeek, sessionMinutes, touchSession, updateDay, updateSet, type Week } from './model.js';
+import { DEFAULT_LIBRARY } from './library.js';
 import {
+  bodyweightOn,
   bodyweightSeries,
   calendarMonth,
+  exerciseTotals,
+  muscleTotals,
+  muscleWeekly,
+  volumeWeekly,
   dayActivities,
   durationSeries,
   exerciseCatalogue,
@@ -200,4 +206,48 @@ test('heat levels and the month grid', () => {
   assert.equal(m.rows[4]?.days[6]?.date, '2026-10-04');
   assert.equal(calendarMonth(2026, 1, new Map()).rows.length, 5); // Feb 2026 starts on a Sunday → five Monday-first rows
   assert.equal(calendarMonth(2027, 1, new Map()).rows.length, 4); // Feb 2027 starts on a Monday → four
+});
+
+test('muscle groups and volume come from the library and the day\'s bodyweight', () => {
+  let a = week('a', '2026-08-10', 'Week 80');
+  a = { ...a, exercises: [{ id: 'pistol-squats', name: 'Pistol Squats', weight: '', sets: 3 }, { id: '1-step-chest-press', name: '+1 step Chest Press', weight: '24kg', sets: 3 }] };
+  a = updateDay(a, 'a-m', { bodyweight: 84 });
+  a = updateSet(a, 'a-m', 'pistol-squats', 0, { v: '8' }); // 8 × 71.4 = 571
+  a = updateSet(a, 'a-m', 'pistol-squats', 1, { v: '6' }); // 6 × 71.4 = 428
+  a = updateSet(a, 'a-m', '1-step-chest-press', 0, { v: '12' }); // 12 × 48 = 576
+  a = updateSet(a, 'a-w', '1-step-chest-press', 0, { v: '10(20)' }); // 10 × 40 = 400, bodyweight carried from Monday
+  const range = statsRange([a], 'all', 0, '2026-08-20');
+  const mw = muscleWeekly([a], range, DEFAULT_LIBRARY);
+  assert.equal(mw.length, 2);
+  const w80 = mw[0]!;
+  assert.equal(w80.sets.quads, 2);
+  assert.equal(w80.sets.glutes, 2);
+  assert.equal(w80.sets.hamstrings, 1); // helper: half a set each
+  assert.equal(w80.sets.chest, 2);
+  assert.equal(w80.sets.triceps, 1);
+  assert.equal(w80.sets.back, 0);
+  assert.equal(w80.load.quads, 571 + 428);
+  assert.equal(w80.load.chest, 576 + 400);
+  assert.equal(w80.load.triceps, Math.round((576 + 400) / 2));
+  assert.deepEqual(mw[1]!.sets.quads, 0);
+  const totals = muscleTotals(mw);
+  assert.deepEqual(totals.slice(0, 2).map((m) => [m.group, m.sets]), [['quads', 2], ['glutes', 2]]);
+  assert.equal(totals.some((m) => m.group === 'back'), false);
+  const ex = exerciseTotals([a], range, DEFAULT_LIBRARY);
+  assert.deepEqual(ex.map((e) => [e.key, e.name, e.sets, e.reps, e.load]), [
+    ['pistol-squats', 'Pistol Squats', 2, 14, 571 + 428],
+    ['chest-press', 'Chest Press', 2, 22, 976],
+  ]);
+  const vol = volumeWeekly([a], range, DEFAULT_LIBRARY);
+  assert.deepEqual(vol.map((v) => [v.n, v.sets, v.reps, v.load, v.empty]), [
+    [80, 4, 36, 571 + 428 + 976, false],
+    [81, 0, 0, 0, true],
+  ]);
+  assert.equal(bodyweightOn([{ date: '2026-08-10', kg: 84 }, { date: '2026-08-20', kg: 83 }], '2026-08-15'), 84);
+  assert.equal(bodyweightOn([{ date: '2026-08-10', kg: 84 }], '2026-08-01'), undefined);
+  // progression volume of a bodyweight exercise uses the library share
+  const rows = exerciseProgress([a], 'pistol-squats', range, DEFAULT_LIBRARY);
+  assert.equal(rows[0]?.volume, 571 + 428);
+  // catalogue folds the renamed chest press into the library entry
+  assert.deepEqual(exerciseCatalogue([a], DEFAULT_LIBRARY).map((e) => [e.id, e.name]), [['pistol-squats', 'Pistol Squats'], ['chest-press', 'Chest Press']]);
 });

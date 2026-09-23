@@ -5,7 +5,8 @@
 // a week Ari skipped is a slot with nothing in it, so gaps stay visible in
 // every chart ("empty weeks should still be noticeable").
 
-import { addDays, fromIsoDate, mondayOf, sessionMinutes, weekNumbers, type DayEntry, type Week } from './model.js';
+import { MUSCLE_GROUPS, libraryIndex, loadPerRep, roleWeight, type LibraryExercise, type MuscleGroup } from './library.js';
+import { addDays, fromIsoDate, mondayOf, sessionMinutes, weekNumbers, type DayEntry, type Exercise, type Week } from './model.js';
 
 // ---- Set notation --------------------------------------------------------------
 
@@ -63,6 +64,11 @@ export function parseWeight(text: string | undefined): number | undefined {
 }
 
 // ---- Days ---------------------------------------------------------------------------
+
+export interface WeightPoint {
+  date: string;
+  kg: number;
+}
 
 export type ActivityKind = 'tracked' | 'other' | 'off';
 
@@ -222,24 +228,53 @@ export interface ExerciseInfo {
   timed: boolean;
 }
 
-/** The exercises of the log, most recently used first, then by how many weeks they ran. */
-export function exerciseCatalogue(weeks: Week[]): ExerciseInfo[] {
+/**
+ * The exercises of the log, most recently used first, then by how many weeks
+ * they ran. With a library, renamed variants of one exercise ("Chest Press",
+ * "+1 step Chest Press") fold into its entry under the library name; the
+ * week's own name still shows in the chart tooltip.
+ */
+export function exerciseCatalogue(weeks: Week[], library: LibraryExercise[] = []): ExerciseInfo[] {
+  const index = libraryIndex(allExercises(weeks), library);
   const map = new Map<string, ExerciseInfo>();
   for (const w of weeks) {
     for (const ex of w.exercises) {
-      const cur = map.get(ex.id);
+      const entry = index.get(ex.id);
+      const key = entry?.id ?? ex.id;
+      const cur = map.get(key);
       const last = w.startDate ?? '';
       if (cur) {
         cur.weeks++;
         if (last > cur.last) {
           cur.last = last;
-          cur.name = ex.name;
+          if (!entry) cur.name = ex.name; // unmatched: the latest spelling
         }
         cur.timed ||= !!ex.timedSec;
-      } else map.set(ex.id, { id: ex.id, name: ex.name, weeks: 1, last, timed: !!ex.timedSec });
+      } else map.set(key, { id: key, name: entry?.name ?? ex.name, weeks: 1, last, timed: !!ex.timedSec || !!entry?.timedSec });
     }
   }
   return [...map.values()].sort((a, b) => (a.last === b.last ? b.weeks - a.weeks : a.last < b.last ? 1 : -1));
+}
+
+function allExercises(weeks: Week[]): Exercise[] {
+  return weeks.flatMap((w) => w.exercises);
+}
+
+/** Bodyweight known on a date: that day's, else the latest logged before it. */
+export function bodyweightOn(weights: WeightPoint[], date: string): number | undefined {
+  let best: WeightPoint | undefined;
+  for (const p of weights) {
+    if (p.date > date) break;
+    best = p;
+  }
+  return best?.kg;
+}
+
+/** Every bodyweight in the log, by date (for carrying forward). */
+export function allBodyweights(weeks: Week[]): WeightPoint[] {
+  const out: WeightPoint[] = [];
+  for (const w of weeks) for (const d of w.days) if (d.date && d.bodyweight !== undefined) out.push({ date: d.date, kg: d.bodyweight });
+  return out.sort((a, b) => (a.date < b.date ? -1 : 1));
 }
 
 export type ExerciseMetric = 'best' | 'total' | 'volume' | 'weight' | 'sets';
@@ -271,7 +306,9 @@ export interface ExerciseWeek extends WeekSlot {
  * exercise was planned but nothing logged keeps `planned` with no values, so
  * the chart shows the gap; a calendar week without an entry is neither.
  */
-export function exerciseProgress(weeks: Week[], exId: string, range: StatsRange): ExerciseWeek[] {
+export function exerciseProgress(weeks: Week[], key: string, range: StatsRange, library: LibraryExercise[] = []): ExerciseWeek[] {
+  const index = libraryIndex(allExercises(weeks), library);
+  const weights = allBodyweights(weeks);
   return weekSlots(weeks, range).map((slot) => {
     const out: ExerciseWeek = { ...slot, planned: false, sets: 0 };
     let best: number | undefined;
@@ -279,23 +316,25 @@ export function exerciseProgress(weeks: Week[], exId: string, range: StatsRange)
     let volume: number | undefined;
     let weight: number | undefined;
     for (const w of slot.weeks) {
-      const ex = w.exercises.find((e) => e.id === exId);
+      const ex = w.exercises.find((e) => e.id === key || index.get(e.id)?.id === key);
       if (!ex) continue;
+      const entry = index.get(ex.id);
       out.planned = true;
       out.name = ex.name;
       const planWeight = parseWeight(ex.weight);
       if (planWeight !== undefined) weight = planWeight;
       for (const d of w.days) {
         if (d.alt?.trim()) continue;
-        for (const s of d.cells[exId]?.sets ?? []) {
+        const bw = d.bodyweight ?? (d.date ? bodyweightOn(weights, d.date) : undefined);
+        for (const s of d.cells[ex.id]?.sets ?? []) {
           const p = parseSetValue(s.v);
           if (!p.logged) continue;
           out.sets++;
           if (p.reps === undefined) continue;
           best = Math.max(best ?? 0, p.reps);
           total = (total ?? 0) + p.reps;
-          const kg = p.weight ?? planWeight;
-          if (kg !== undefined) volume = (volume ?? 0) + p.reps * kg;
+          const kg = loadPerRep(entry, planWeight, bw, p.weight);
+          if (kg !== undefined) volume = (volume ?? 0) + Math.round(p.reps * kg);
         }
       }
     }
@@ -320,6 +359,158 @@ export function metricValue(w: ExerciseWeek, metric: ExerciseMetric): number | u
     case 'sets':
       return w.sets || undefined;
   }
+}
+
+// ---- Muscle groups and volume ---------------------------------------------------------
+
+/** One logged set with what it moved and which muscles it hit. */
+interface SetRecord {
+  date: string;
+  monday: string;
+  exKey: string;
+  exName: string;
+  reps?: number;
+  /** kg moved in the set (reps × load per rep), when known. */
+  load?: number;
+  muscles: { group: MuscleGroup; weight: number }[];
+}
+
+/** Every logged set in the range, with muscle groups and load from the library. */
+export function setRecords(weeks: Week[], range: StatsRange, library: LibraryExercise[]): SetRecord[] {
+  const index = libraryIndex(allExercises(weeks), library);
+  const weights = allBodyweights(weeks);
+  const end = addDays(range.to, 7);
+  const out: SetRecord[] = [];
+  for (const w of weeks) {
+    if (!w.startDate || w.startDate < range.from || w.startDate >= end) continue;
+    for (const d of w.days) {
+      if (d.alt?.trim()) continue;
+      const date = d.date ?? w.startDate;
+      const bw = d.bodyweight ?? bodyweightOn(weights, date);
+      for (const ex of w.exercises) {
+        const entry = index.get(ex.id);
+        const planWeight = parseWeight(ex.weight);
+        for (const s of d.cells[ex.id]?.sets ?? []) {
+          const p = parseSetValue(s.v);
+          if (!p.logged) continue;
+          const perRep = loadPerRep(entry, planWeight, bw, p.weight);
+          const rec: SetRecord = {
+            date,
+            monday: w.startDate,
+            exKey: entry?.id ?? ex.id,
+            exName: entry?.name ?? ex.name,
+            muscles: (entry?.muscles ?? []).map((m) => ({ group: m.group, weight: roleWeight(m.role) })),
+          };
+          if (p.reps !== undefined) rec.reps = p.reps;
+          if (p.reps !== undefined && perRep !== undefined) rec.load = Math.round(p.reps * perRep);
+          out.push(rec);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+export type MuscleTotals = Record<MuscleGroup, number>;
+
+function zeroTotals(): MuscleTotals {
+  const out = {} as MuscleTotals;
+  for (const m of MUSCLE_GROUPS) out[m.id] = 0;
+  return out;
+}
+
+export interface MuscleWeek extends WeekSlot {
+  /** Sets per group (a prime mover counts the set fully, a helper half). */
+  sets: MuscleTotals;
+  /** kg moved per group, same weighting. */
+  load: MuscleTotals;
+}
+
+/** Sets and load per muscle group per calendar week. */
+export function muscleWeekly(weeks: Week[], range: StatsRange, library: LibraryExercise[]): MuscleWeek[] {
+  const records = setRecords(weeks, range, library);
+  const byMonday = new Map<string, SetRecord[]>();
+  for (const r of records) byMonday.set(r.monday, [...(byMonday.get(r.monday) ?? []), r]);
+  return weekSlots(weeks, range).map((slot) => {
+    const sets = zeroTotals();
+    const load = zeroTotals();
+    for (const r of byMonday.get(slot.start) ?? []) {
+      for (const m of r.muscles) {
+        sets[m.group] += m.weight;
+        if (r.load !== undefined) load[m.group] += m.weight * r.load;
+      }
+    }
+    for (const m of MUSCLE_GROUPS) {
+      sets[m.id] = Math.round(sets[m.id] * 10) / 10;
+      load[m.id] = Math.round(load[m.id]);
+    }
+    return { ...slot, sets, load };
+  });
+}
+
+export interface MuscleShare {
+  group: MuscleGroup;
+  sets: number;
+  load: number;
+}
+
+/** Sets and load per muscle group over the whole range, biggest first (groups with nothing are left out). */
+export function muscleTotals(weekly: MuscleWeek[]): MuscleShare[] {
+  const out: MuscleShare[] = MUSCLE_GROUPS.map((m) => ({ group: m.id, sets: 0, load: 0 }));
+  for (const w of weekly) {
+    for (const m of out) {
+      m.sets += w.sets[m.group];
+      m.load += w.load[m.group];
+    }
+  }
+  return out
+    .map((m) => ({ ...m, sets: Math.round(m.sets * 10) / 10 }))
+    .filter((m) => m.sets > 0)
+    .sort((a, b) => b.sets - a.sets || b.load - a.load);
+}
+
+export interface ExerciseShare {
+  key: string;
+  name: string;
+  sets: number;
+  reps: number;
+  load: number;
+}
+
+/** Sets, reps and load per exercise over the range, most sets first. */
+export function exerciseTotals(weeks: Week[], range: StatsRange, library: LibraryExercise[]): ExerciseShare[] {
+  const map = new Map<string, ExerciseShare>();
+  for (const r of setRecords(weeks, range, library)) {
+    const cur = map.get(r.exKey) ?? { key: r.exKey, name: r.exName, sets: 0, reps: 0, load: 0 };
+    cur.sets++;
+    cur.reps += r.reps ?? 0;
+    cur.load += r.load ?? 0;
+    map.set(r.exKey, cur);
+  }
+  return [...map.values()].sort((a, b) => b.sets - a.sets);
+}
+
+export interface VolumeWeek extends WeekSlot {
+  sets: number;
+  reps: number;
+  /** kg moved (sets whose load is known). */
+  load: number;
+  empty: boolean;
+}
+
+/** Sets, reps and kg moved per calendar week. */
+export function volumeWeekly(weeks: Week[], range: StatsRange, library: LibraryExercise[]): VolumeWeek[] {
+  const records = setRecords(weeks, range, library);
+  return weekSlots(weeks, range).map((slot) => {
+    const mine = records.filter((r) => r.monday === slot.start);
+    return {
+      ...slot,
+      sets: mine.length,
+      reps: mine.reduce((n, r) => n + (r.reps ?? 0), 0),
+      load: mine.reduce((n, r) => n + (r.load ?? 0), 0),
+      empty: slot.weeks.length === 0,
+    };
+  });
 }
 
 // ---- Heatmap / calendar --------------------------------------------------------------
@@ -363,11 +554,6 @@ export function calendarMonth(year: number, month0: number, days: Map<string, Da
 }
 
 // ---- Bodyweight -----------------------------------------------------------------------
-
-export interface WeightPoint {
-  date: string;
-  kg: number;
-}
 
 /** Every bodyweight logged in the range, by date. */
 export function bodyweightSeries(weeks: Week[], range: StatsRange): WeightPoint[] {

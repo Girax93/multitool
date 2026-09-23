@@ -446,9 +446,9 @@ test('week numbers: from the label, else from the nearest numbered week by calen
   assert.deepEqual(weeks.map((w) => [w.id, n.get(w.id)]), [['a', 79], ['b', 80], ['c', 81], ['d', 82], ['e', 83], ['f', 6]]);
   // without any numbered week the position is used
   assert.deepEqual([...weekNumbers([mk('x', 'Deload', '2026-01-05'), mk('y', 'Deload', '2026-01-12')]).values()], [1, 2]);
-  assert.equal(pageTabLabel(n, weeks.slice(0, 5)), '79–83');
-  assert.equal(pageTabLabel(n, [weeks[1]!]), '80');
-  // the old bug: an unnumbered week at the end of a page read "81–80"
-  const old = new Map([['b', 80], ['c', 81]]);
-  assert.equal(pageTabLabel(old, [weeks[2]!, weeks[1]!]), '80–81');
+  // tabs go by position, so they never overlap whatever the labels say
+  assert.equal(pageTabLabel(0, 10), '1–10');
+  assert.equal(pageTabLabel(70, 10), '71–80');
+  assert.equal(pageTabLabel(80, 6), '81–86');
+  assert.equal(pageTabLabel(85, 1), '86');
 });
