@@ -17,11 +17,13 @@ import {
   getSet,
   isNumbered,
   legendColor,
+  noteSuggestions,
   removeFootnote,
   splitLinks,
   toTypedCell,
   typeSet,
   updateDay,
+  updateExercise,
   updateExerciseDayStyle,
   updateFootnote,
   pageTabLabel,
@@ -588,34 +590,173 @@ function openFootnoteMenu(x: number, y: number, service: WorkoutService, weekId:
   );
 }
 
+interface StyleMenuSpec {
+  /** Fresh state on every render; undefined closes the menu (the cell is gone). */
+  read(): { style: CellStyle; marks?: string } | undefined;
+  onStyle(style: CellStyle): void;
+  /** Marks toggled from the legend's list; absent = the cell has no marks. */
+  onMarks?(marks: string): void;
+  actions: { label: string; onClick(): void; testid?: string }[];
+  /** Testid of the menu root, for the smoke test. */
+  testid?: string;
+}
+
+/**
+ * Right-click / long-press menu for every cell that is not a set: colour and
+ * star from the legend, the legend's marks where the cell has them (exercise
+ * header, day cell), then the sheet editor. Ari: "all cells should be
+ * possible to change colours and marks of" (2026-09-24).
+ */
+function openStyleMenu(x: number, y: number, service: WorkoutService, spec: StyleMenuSpec): void {
+  const pop = openPopover(x, y);
+  if (spec.testid) pop.el.dataset['menu'] = spec.testid;
+  const render = (): void => {
+    const state = spec.read();
+    if (!state) {
+      pop.close();
+      return;
+    }
+    const marks = service.settings.get().marks;
+    const current = state.marks ?? '';
+    replace(
+      pop.el,
+      h('div', { class: 'pop-row' }, h('span', { class: 'pop-label' }, 'Colour')),
+      swatches(service, state.style, (style) => {
+        spec.onStyle(style);
+        render();
+      }),
+      spec.onMarks
+        ? h(
+            'div',
+            { class: 'pop-row' },
+            h('span', { class: 'pop-label' }, 'Marks'),
+            h(
+              'div',
+              { class: 'chips chips-tight' },
+              ...marks.map((m) =>
+                chip(m.symbol, current.endsWith(m.symbol), () => {
+                  spec.onMarks?.(current.endsWith(m.symbol) ? current.slice(0, -m.symbol.length) : current + m.symbol);
+                  render();
+                }, 'chip-mark'),
+              ),
+            ),
+          )
+        : null,
+      h(
+        'div',
+        { class: 'pop-actions' },
+        ...spec.actions.map((a) =>
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'btn btn-sm',
+              dataset: a.testid ? { testid: a.testid } : undefined,
+              onClick: () => {
+                pop.close();
+                a.onClick();
+              },
+            },
+            a.label,
+          ),
+        ),
+      ),
+    );
+  };
+  render();
+}
+
+/** Menu for an exercise header: colour / star / marks on the exercise for this week. */
+function openExerciseMenu(x: number, y: number, service: WorkoutService, weekId: string, exId: string): void {
+  const find = (): { w: Week; ex: Week['exercises'][number] } | undefined => {
+    const w = service.get(weekId);
+    const ex = w?.exercises.find((e) => e.id === exId);
+    return w && ex ? { w, ex } : undefined;
+  };
+  openStyleMenu(x, y, service, {
+    testid: 'exercise',
+    read: () => {
+      const f = find();
+      return f ? { style: { c: f.ex.c, star: f.ex.star }, marks: f.ex.marks ?? '' } : undefined;
+    },
+    onStyle: (style) => service.update(weekId, (x) => updateExercise(x, exId, style)),
+    onMarks: (marks) => service.update(weekId, (x) => updateExercise(x, exId, { marks })),
+    actions: [{ label: 'Edit exercises…', testid: 'menu-exercise-editor', onClick: () => openExercisesEditor(service, weekId, exId) }],
+  });
+}
+
+/** Menu for a day cell (and the other-workout cell): colour / star / marks on the day. */
+function openDayMenu(x: number, y: number, service: WorkoutService, weekId: string, dayId: string): void {
+  openStyleMenu(x, y, service, {
+    testid: 'day',
+    read: () => {
+      const day = service.get(weekId)?.days.find((d) => d.id === dayId);
+      return day ? { style: { c: day.c, star: day.star }, marks: day.marks ?? '' } : undefined;
+    },
+    onStyle: (style) => service.update(weekId, (x) => updateDay(x, dayId, style)),
+    onMarks: (marks) => service.update(weekId, (x) => updateDay(x, dayId, { marks })),
+    actions: [{ label: 'Edit day…', testid: 'menu-day-editor', onClick: () => openDayEditor(service, weekId, dayId) }],
+  });
+}
+
+/** Menu for the corner cell: colour / star on the week's label. */
+function openWeekLabelMenu(x: number, y: number, service: WorkoutService, ctx: ToolContext, weekId: string): void {
+  openStyleMenu(x, y, service, {
+    testid: 'week',
+    read: () => {
+      const w = service.get(weekId);
+      return w ? { style: { c: w.c, star: w.star } } : undefined;
+    },
+    onStyle: (style) => service.update(weekId, (x) => clean({ ...x, ...style })),
+    actions: [{ label: 'Edit week…', testid: 'menu-week-editor', onClick: () => openWeekEditor(service, ctx, weekId) }],
+  });
+}
+
+/** Menu for the week-note cell: its own colour. */
+function openWeekNotesMenu(x: number, y: number, service: WorkoutService, ctx: ToolContext, weekId: string): void {
+  openStyleMenu(x, y, service, {
+    testid: 'week-notes',
+    read: () => {
+      const w = service.get(weekId);
+      return w ? { style: w.notesStyle ?? {} } : undefined;
+    },
+    onStyle: (style) =>
+      service.update(weekId, (x) => {
+        const merged = clean({ ...(x.notesStyle ?? {}), ...style });
+        return clean({ ...x, notesStyle: Object.keys(merged).length ? merged : undefined });
+      }),
+    actions: [{ label: 'Edit week…', onClick: () => openWeekEditor(service, ctx, weekId) }],
+  });
+}
+
 export function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, settings: WorkoutSettings, opts: { highlightDayId?: string } = {}): HTMLElement {
   const unit = settings.unit;
-  const headRow = h(
-    'tr',
-    null,
+  const corner = h(
+    'th',
+    { class: 'wk-corner', dataset: { testid: 'week-corner' } },
+    // The week's label and start date sit where the sheet had "Day"; tapping opens the week list.
     h(
-      'th',
-      { class: 'wk-corner' },
-      // The week's label and start date sit where the sheet had "Day"; tapping opens the week list.
-      h(
-        'button',
-        { class: 'wk-hbtn wk-corner-btn', dataset: { testid: 'week-label' }, title: 'Jump to another week', onClick: () => openWeekPicker(service) },
-        h('span', { class: 'wk-label-title' }, week.label),
-        week.startDate ? h('span', { class: 'wk-corner-date' }, week.startDate) : null,
-      ),
+      'button',
+      { class: 'wk-hbtn wk-corner-btn', dataset: { testid: 'week-label' }, title: 'Jump to another week; right-click or hold for colours', onClick: () => openWeekPicker(service) },
+      h('span', { class: 'wk-label-title' }, week.label),
+      week.startDate ? h('span', { class: 'wk-corner-date' }, week.startDate) : null,
     ),
   );
+  onContextAction(corner, (x, y) => openWeekLabelMenu(x, y, service, ctx, week.id));
+  applyStyle(corner, settings, week);
+  const headRow = h('tr', null, corner);
   for (const ex of week.exercises) {
     const th = h(
       'th',
-      { colSpan: ex.sets, class: 'wk-ex' },
+      { colSpan: ex.sets, class: 'wk-ex', dataset: { ex: ex.id } },
       h(
         'button',
-        { class: 'wk-hbtn', dataset: { ex: ex.id, testid: 'exercise-header' }, onClick: () => openExercisesEditor(service, week.id, ex.id) },
+        { class: 'wk-hbtn', dataset: { ex: ex.id, testid: 'exercise-header' }, title: 'Tap to edit the exercises; right-click or hold for colours and marks', onClick: () => openExercisesEditor(service, week.id, ex.id) },
         h('span', { class: 'wk-ex-name' }, ex.name || 'Exercise'),
-        ex.weight ? h('span', { class: 'wk-ex-weight' }, ex.weight) : null,
+        ex.weight || ex.marks ? h('span', { class: 'wk-ex-weight' }, ex.weight ?? '', ex.marks ? h('span', { class: 'wk-marks' }, `${ex.weight ? ' ' : ''}${ex.marks}`) : null) : null,
       ),
     );
+    onContextAction(th, (x, y) => openExerciseMenu(x, y, service, week.id, ex.id));
     applyStyle(th, settings, ex);
     headRow.appendChild(th);
   }
@@ -631,7 +772,7 @@ export function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week
     const tr = h('tr', { class: day.id === opts.highlightDayId ? 'wk-today' : undefined, dataset: { day: day.id } });
     const dayBtn = h(
       'button',
-      { class: 'wk-hbtn wk-day', dataset: { testid: 'day-header' }, onClick: () => openDayEditor(service, week.id, day.id) },
+      { class: 'wk-hbtn wk-day', dataset: { testid: 'day-header' }, title: 'Tap to edit the day; right-click or hold for colours and marks', onClick: () => openDayEditor(service, week.id, day.id) },
       h('span', { class: 'wk-day-name' }, day.weekday, day.marks ? h('span', { class: 'wk-marks' }, ` ${day.marks}`) : null),
       settings.trackBodyweight
         ? h('span', { class: `wk-day-bw${day.bodyweight === undefined ? ' wk-day-bw-empty' : ''}` }, day.bodyweight === undefined ? `— ${unit}` : `${day.bodyweight} ${unit}`)
@@ -640,6 +781,7 @@ export function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week
           : null,
     );
     const th = h('th', { class: 'wk-dayh' }, dayBtn);
+    onContextAction(th, (x, y) => openDayMenu(x, y, service, week.id, day.id));
     applyStyle(th, settings, day);
     tr.appendChild(th);
 
@@ -656,7 +798,9 @@ export function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week
           h('span', null, ...rich(day.alt.trim(), ctx)),
         ),
       );
-      // The day's colour stays on the day cell; the other-workout cell is plain.
+      // The day's colour stays on the day cell; the other-workout cell is plain
+      // (its menu colours the day).
+      onContextAction(td, (x, y) => openDayMenu(x, y, service, week.id, day.id));
       tr.appendChild(td);
     } else {
       for (const ex of week.exercises) {
@@ -692,6 +836,8 @@ export function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week
               multiline: true,
               placeholder: 'Notes for this day',
               testid: 'notes-inline',
+              // things written on other days ("Pre-workout"), offered as you type
+              suggestions: noteSuggestions(service.weeks.get()),
               onCommit: (text) => {
                 if (text.trim() !== (day.notes ?? '').trim()) service.update(week.id, (x) => updateDay(x, day.id, { notes: text.trim() }));
               },
@@ -763,13 +909,15 @@ function renderNotesRow(service: WorkoutService, ctx: ToolContext, week: Week): 
     tr.appendChild(cell);
   }
   const last = h('td', { class: 'wk-notes wk-fncell wk-fnlast' });
+  onContextAction(last, (x, y) => openWeekNotesMenu(x, y, service, ctx, week.id));
+  applyStyle(last, service.settings.get(), week.notesStyle);
   last.appendChild(
     h(
       'button',
       {
         class: 'wk-cbtn wk-cbtn-notes',
         dataset: { testid: 'week-notes' },
-        title: 'Notes for the whole week — tap to edit',
+        title: 'Notes for the whole week — tap to edit; right-click or hold for a colour',
         onClick: () =>
           editInline(last, {
             value: week.notes ?? '',

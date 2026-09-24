@@ -219,6 +219,70 @@ def main() -> int:
             page.locator(".sheet-panel button", has_text="Done").click()
             expect(page.locator(".sheet-panel")).to_have_count(0)
 
+            # every other cell has a menu too: exercise header (colour + marks), day cell (colour + marks), week label, week note
+            pop = page.locator("[data-testid='popover']")
+            grid.locator("th.wk-ex").nth(1).click(button="right")
+            expect(pop).to_have_attribute("data-menu", "exercise")
+            pop.locator(".chip-mark", has_text=re.compile(r"^!$")).click()
+            pop.locator(".swatch").nth(4).click()  # gold
+            expect(grid.locator("th.wk-ex").nth(1)).to_have_class(re.compile(r"wk-tinted"))
+            expect(grid.locator("th.wk-ex").nth(1)).to_contain_text("24kg !")
+            page.keyboard.press("Escape")
+            expect(pop).to_have_count(0)
+            wed_head = grid.locator("tbody tr").nth(1).locator("th.wk-dayh")
+            wed_head.click(button="right")
+            expect(pop).to_have_attribute("data-menu", "day")
+            pop.locator(".chip-mark", has_text=re.compile(r"^\*$")).click()
+            expect(wed_head).to_contain_text("Wed *")
+            page.click("[data-testid='menu-day-editor']")
+            expect(page.locator(".sheet-panel")).to_be_visible()
+            expect(page.locator(".sheet-panel input[placeholder^='e.g. *']")).to_have_value("*")
+            page.locator(".sheet-panel button", has_text="Done").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            page.locator("[data-testid='week-corner']").click(button="right")
+            expect(pop).to_have_attribute("data-menu", "week")
+            assert pop.locator(".chip-mark").count() == 0  # a label has no marks
+            pop.locator(".swatch").nth(4).click()  # gold label, like the sheet's "Week 17/18" cells
+            expect(page.locator("[data-testid='week-corner']")).to_have_class(re.compile(r"wk-tinted"))
+            page.keyboard.press("Escape")
+            page.locator("td.wk-fnlast").click(button="right")
+            expect(pop).to_have_attribute("data-menu", "week-notes")
+            pop.locator(".swatch").nth(1).click()  # green
+            expect(page.locator("td.wk-fnlast")).to_have_class(re.compile(r"wk-tinted"))
+            page.keyboard.press("Escape")
+            expect(pop).to_have_count(0)
+
+            # day notes: pieces written before are offered again (drop-down under the field, filtered as you type)
+            first_row.locator("[data-testid='notes-cell']").click()
+            expect(page.locator("[data-testid='notes-inline']")).to_be_focused()
+            page.fill("[data-testid='notes-inline']", "Pre-workout, Coffee")
+            page.keyboard.press("Enter")
+            expect(first_row.locator("[data-testid='notes-cell']")).to_have_text("Pre-workout, Coffee")
+            grid.locator("tbody tr").nth(1).locator("[data-testid='notes-cell']").click()
+            suggest = page.locator("[data-testid='note-suggest']")
+            expect(suggest.locator(".suggest-item")).to_have_text(["Pre-workout", "Coffee"])
+            page.keyboard.type("co")
+            expect(suggest.locator(".suggest-item")).to_have_text(["Coffee"])
+            suggest.locator(".suggest-item").first.dispatch_event("pointerdown")
+            expect(page.locator("[data-testid='notes-inline']")).to_have_value("Coffee")
+            expect(page.locator("[data-testid='notes-inline']")).to_be_focused()
+            page.keyboard.type(", pr")
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")  # takes the highlighted entry, keeps editing
+            expect(page.locator("[data-testid='notes-inline']")).to_have_value("Coffee, Pre-workout")
+            page.keyboard.press("Enter")
+            expect(page.locator("[data-testid='notes-inline']")).to_have_count(0)
+            expect(suggest).to_have_count(0)
+            expect(grid.locator("tbody tr").nth(1).locator("[data-testid='notes-cell']")).to_have_text("Coffee, Pre-workout")
+            # the day editor offers the same pieces as chips
+            grid.locator("tbody tr").nth(2).locator("[data-testid='day-header']").click()
+            expect(page.locator("[data-testid='note-chips'] .chip")).to_have_text(["Coffee", "Pre-workout"])
+            page.locator("[data-testid='note-chips'] .chip", has_text="Coffee").click()
+            expect(page.locator(".sheet-panel textarea[placeholder='Notes for this day']")).to_have_value("Coffee")
+            page.locator(".sheet-panel button", has_text="Done").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            expect(grid.locator("tbody tr").nth(2).locator("[data-testid='notes-cell']")).to_have_text("Coffee")
+
             # bodyweight via the day header
             first_row.locator("[data-testid='day-header']").click()
             page.fill("[data-testid='day-bodyweight']", "97.1")
@@ -277,6 +341,18 @@ def main() -> int:
             expect(page.locator("[data-testid='week-label']")).not_to_have_text(label_before)
             assert page.locator("[data-testid='exercise-header']").count() == 2
             expect(page.locator("tbody tr").nth(0).locator("td.wk-cell").nth(0)).to_have_text("")
+            expect(page.locator("th.wk-ex").nth(1)).to_contain_text("24kg")
+            expect(page.locator("th.wk-ex").nth(1)).not_to_have_class(re.compile(r"wk-tinted"))  # the colour stays with last week
+
+            # a changed weight: purple header this week (the sheet's "weight increased"), remembered by the library
+            page.locator("[data-testid='exercise-header']").nth(1).click()
+            page.locator("[data-testid='exercise-weight']").nth(1).fill("26kg")
+            page.locator("[data-testid='exercise-weight']").nth(1).dispatch_event("change")
+            page.locator(".sheet-panel .btn-primary").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            expect(page.locator("th.wk-ex").nth(1)).to_contain_text("26kg")
+            expect(page.locator("th.wk-ex").nth(1)).to_have_class(re.compile(r"wk-tinted"))
+            assert page.locator("th.wk-ex").nth(1).evaluate("el => getComputedStyle(el).getPropertyValue('--cell-bg').trim()") == "#6b4f9a"
 
             # view modes: all weeks, X per page with tabs, back to one
             page.click("[data-testid='week-menu']")
@@ -311,6 +387,7 @@ def main() -> int:
             page.screenshot(path=str(SHOTS / "11-workout-settings.png"))
             # exercise library: built-ins are listed; a new one can be added with muscles and a bodyweight share
             expect(page.locator("[data-testid='library-row'][data-lib='push-ups']")).to_contain_text("64 % of bodyweight")
+            expect(page.locator("[data-testid='library-row'][data-lib='dumbbell-rows']")).to_contain_text("· 26kg")  # the weight typed in the week
             page.click("[data-testid='library-add']")
             page.fill("[data-testid='lib-name']", "Nordic Curls")
             page.locator(".sheet-panel .chip-primary", has_text="Hamstrings").click()

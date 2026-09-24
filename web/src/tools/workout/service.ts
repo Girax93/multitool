@@ -13,12 +13,15 @@ import {
   mondayOf,
   newWeek,
   nextWeekLabelFrom,
+  previousExercise,
   sortWeeks,
   toIsoDate,
   weekHasContent,
+  type Exercise,
   type Week,
   type WorkoutSettings,
 } from './model.js';
+import { matchLibrary, withDefaultWeight } from './library.js';
 
 const WEEK_PREFIX = 'weeks/';
 const SETTINGS_KEY = 'settings';
@@ -237,6 +240,27 @@ export class WorkoutService {
     const next = mergeSettings({ ...this.settings.get(), ...patch });
     this.settings.set(next);
     await this.ctx.kv.set(SETTINGS_KEY, next);
+  }
+
+  /** The weight an exercise had the last time it was on the plan before this week (undefined: never before). */
+  previousWeight(weekId: string, ex: Pick<Exercise, 'id' | 'name' | 'lib'>): string | undefined {
+    const week = this.get(weekId);
+    if (!week) return undefined;
+    const prev = previousExercise(this.weeks.get(), week, ex, this.settings.get().library);
+    return prev ? (prev.weight ?? '') : undefined;
+  }
+
+  /**
+   * A weight typed on an exercise becomes the library entry's default (Ari:
+   * "the new default for all future exercises of that kind"): the picker
+   * writes it on the exercise the next time it is added to a week. New weeks
+   * copy the latest week anyway, which already carries it.
+   */
+  rememberWeight(ex: Pick<Exercise, 'id' | 'name' | 'lib'>, weight: string): void {
+    const s = this.settings.get();
+    const entry = matchLibrary(ex, s.library);
+    if (!entry || (entry.weight ?? '') === weight.trim()) return;
+    void this.updateSettings({ library: withDefaultWeight(s.library, entry.id, weight) });
   }
 
   /**

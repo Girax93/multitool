@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_LIBRARY, describeEntry, loadPerRep, matchLibrary, mergeLibrary, slug } from './library.js';
+import { DEFAULT_LIBRARY, describeEntry, loadPerRep, matchLibrary, mergeLibrary, slug, withDefaultWeight } from './library.js';
 import { mergeSettings } from './model.js';
 
 test('slugs match the import ids', () => {
@@ -75,4 +75,15 @@ test('merging: edits win, deletions stick, new built-ins arrive', () => {
   const settings = mergeSettings({ libraryRemoved: ['dips'] });
   assert.equal(settings.library.some((e) => e.id === 'dips'), false);
   assert.equal(mergeSettings(undefined).library.length, DEFAULT_LIBRARY.length);
+});
+
+test('the last weight typed becomes the entry default and shows in its summary', () => {
+  const lib = withDefaultWeight(DEFAULT_LIBRARY, 'dumbbell-rows', ' 26kg ');
+  const rows = lib.find((e) => e.id === 'dumbbell-rows')!;
+  assert.equal(rows.weight, '26kg');
+  assert.ok(describeEntry(rows).endsWith(' · 26kg'));
+  assert.equal(lib.find((e) => e.id === 'chest-press')?.weight, undefined, 'other entries untouched');
+  assert.equal(withDefaultWeight(lib, 'dumbbell-rows', '').find((e) => e.id === 'dumbbell-rows')?.weight, undefined, 'an empty weight forgets the default');
+  // the merged library keeps the remembered weight of a built-in
+  assert.equal(mergeSettings({ library: [rows] }).library.find((e) => e.id === 'dumbbell-rows')?.weight, '26kg');
 });

@@ -20,12 +20,15 @@ import {
   isNumbered,
   moveExercise,
   nextFootnoteNumber,
+  noteSuggestions,
   numberedFootnotes,
   removeDay,
   removeExercise,
   removeFootnote,
   setDayDate,
   setDayWeekday,
+  setExerciseWeight,
+  splitNotePieces,
   toIsoDate,
   toggleRef,
   updateDay,
@@ -80,6 +83,30 @@ export function linkChip(field: HTMLInputElement | HTMLTextAreaElement): HTMLEle
 /** Small hint under note fields. */
 export function linkHint(): HTMLElement {
   return h('p', { class: 'muted field-hint' }, 'Links: paste a URL, or write [text](https://…).');
+}
+
+/**
+ * Chips with things written in day notes before ("Pre-workout", "Coffee"):
+ * a tap adds one to the field, after a comma when there is text already.
+ * Pieces the field already holds are left out.
+ */
+export function noteChips(service: WorkoutService, field: HTMLTextAreaElement | HTMLInputElement, max = 8): HTMLElement | null {
+  const present = new Set(splitNotePieces(field.value).map((p) => p.toLowerCase()));
+  const pieces = noteSuggestions(service.weeks.get()).filter((p) => !present.has(p.toLowerCase())).slice(0, max);
+  if (!pieces.length) return null;
+  const row = h('div', { class: 'chips chips-tight', dataset: { testid: 'note-chips' } });
+  for (const piece of pieces) {
+    const c = chip(piece, false, () => {
+      const v = field.value.trimEnd();
+      field.value = v ? (v.endsWith(',') ? `${v} ${piece}` : `${v}, ${piece}`) : piece;
+      field.dispatchEvent(new Event('input'));
+      c.remove();
+      field.focus();
+      field.setSelectionRange(field.value.length, field.value.length);
+    });
+    row.appendChild(c);
+  }
+  return row;
 }
 
 /** Colour / star swatches from the legend. `current` is the style being edited. */
@@ -422,6 +449,7 @@ export function openDayEditor(service: WorkoutService, weekId: string, dayId: st
       field('Marks', marks),
       markChips,
       field('Notes', notes),
+      noteChips(service, notes),
       h('div', { class: 'chips chips-tight' }, linkChip(notes)),
       h(
         'div',
@@ -496,6 +524,7 @@ export function openNotesEditor(service: WorkoutService, weekId: string, dayId: 
     replace(
       sheet.body,
       notes,
+      noteChips(service, notes),
       h('div', { class: 'chips chips-tight' }, linkChip(notes)),
       linkHint(),
       h('div', { class: 'editor-row' }, h('span', { class: 'editor-label' }, 'Colour'), swatches(service, day.notesStyle ?? {}, (style) => {
@@ -545,7 +574,7 @@ export function openExercisesEditor(service: WorkoutService, weekId: string, foc
             }
             const id = uid('ex');
             service.update(weekId, (x) =>
-              addExercise(x, clean({ id, name: entry.name, weight: '', sets: entry.sets ?? service.settings.get().defaultSets, timedSec: entry.timedSec, lib: entry.id })),
+              addExercise(x, clean({ id, name: entry.name, weight: entry.weight ?? '', sets: entry.sets ?? service.settings.get().defaultSets, timedSec: entry.timedSec, lib: entry.id })),
             );
             render();
           });
@@ -569,8 +598,14 @@ export function openExercisesEditor(service: WorkoutService, weekId: string, foc
   const exerciseRow = (w: Week, ex: Exercise, i: number): HTMLElement => {
     const name = h('input', { type: 'text', class: 'input', placeholder: 'Exercise', value: ex.name, dataset: { ex: ex.id, testid: 'exercise-name' } });
     name.addEventListener('input', () => service.update(weekId, (x) => updateExercise(x, ex.id, { name: name.value })));
+    // A changed weight turns the header purple (the sheet's "weight increased")
+    // and, once typed, becomes the library's default for this exercise.
     const weight = h('input', { type: 'text', class: 'input input-short', placeholder: 'weight', value: ex.weight, dataset: { testid: 'exercise-weight' } });
-    weight.addEventListener('input', () => service.update(weekId, (x) => updateExercise(x, ex.id, { weight: weight.value })));
+    weight.addEventListener('input', () => {
+      const previous = service.previousWeight(weekId, ex);
+      service.update(weekId, (x) => setExerciseWeight(x, ex.id, weight.value, previous));
+    });
+    weight.addEventListener('change', () => service.rememberWeight(ex, weight.value));
     const sets = h('input', { type: 'number', class: 'input input-num input-short', inputMode: 'numeric', min: 1, max: 10, value: String(ex.sets), 'aria-label': 'Sets' });
     sets.addEventListener('change', () => {
       const n = Math.min(10, Math.max(1, parseInt(sets.value, 10) || 1));
@@ -952,6 +987,12 @@ export function openLibraryEditor(service: WorkoutService, id: string | undefine
       draft.sets = Math.min(10, Math.max(1, parseInt(sets.value, 10) || 3));
       save();
     });
+    // The weight written on the exercise when it is added to a week; follows the last weight typed in a week.
+    const defWeight = h('input', { type: 'text', class: 'input input-short', placeholder: 'e.g. 24kg', value: draft.weight ?? '', dataset: { testid: 'lib-weight' } });
+    defWeight.addEventListener('change', () => {
+      draft.weight = defWeight.value.trim() || undefined;
+      save();
+    });
     const aliases = h('input', { type: 'text', class: 'input', value: (draft.aliases ?? []).join(', '), placeholder: 'e.g. "NO BENCH: Dumbbell Rows"', dataset: { testid: 'lib-aliases' } });
     aliases.addEventListener('change', () => {
       draft.aliases = aliases.value.split(',').map((x) => x.trim()).filter(Boolean);
@@ -971,6 +1012,7 @@ export function openLibraryEditor(service: WorkoutService, id: string | undefine
       h('div', { class: 'field-col' }, h('span', { class: 'field-label' }, 'Weight per rep'), kindSeg),
       loadDetail,
       h('div', { class: 'row' }, h('label', { class: 'check check-inline' }, timed, h('span', null, 'Timed sets')), work, h('span', { class: 'muted-inline' }, 'Sets'), sets),
+      field('Weight when added to a week', defWeight, 'Follows the last weight you type on the exercise in a week.'),
       field('Other names in the log', aliases, 'Comma separated; older spellings of this exercise land here in the stats.'),
       field('Note', note),
       h(

@@ -77,7 +77,23 @@ typed is sheet notation — marks as text, dot runs for note references
 (`12!..` = "12!" with note 2; a note referred to for the first time is created
 empty). Right-click / long-press opens a popover (`ui/popover.ts`) next to the
 pointer with colour (set / exercise / day), star, marks, clear and a way into
-the full bottom-sheet editor. The log keeps its scroll position across
+the full bottom-sheet editor. Every other cell has such a menu too
+(`openStyleMenu` in `view.ts`): an exercise header (colour / star on the
+exercise, marks in `Exercise.marks` shown after the weight), a day cell and
+the other-workout cell (the day's colour / star / `marks`), the corner cell
+(`Week.c` / `star`, the sheet's gold "Week 17/18" labels) and the week-note
+cell (`Week.notesStyle`). Typing a weight in the exercises editor compares it
+with the last time the exercise was on the plan (`previousExercise`, by id,
+library entry or name): a different weight turns the header purple — the
+sheet's "weight increased" — and the same weight takes it off again
+(`setExerciseWeight`; a colour picked by hand is left alone; the purple is
+not copied into the next week, the weight is). The weight also becomes the
+library entry's `weight`, which the picker writes on the exercise the next
+time it is added to a week. A day's notes get suggestions
+(`noteSuggestions`): every short comma- or line-separated piece written in a
+day note before, newest first; the inline editor lists them under the field
+filtered by the piece being typed (`inline.ts` `suggestions`, ↑ ↓ Enter / Tab
+or a tap), the day editor shows them as chips. The log keeps its scroll position across
 re-renders and scrolls to the current week only when the user navigates; it
 opens on the newest week. `[label](url)` and bare URLs in notes render as
 links (opened through the native bridge). A new week counts on from the

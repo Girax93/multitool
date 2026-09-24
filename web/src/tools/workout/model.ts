@@ -6,7 +6,7 @@
 // Excel-style colour / star / mark annotations that can sit on any cell, on an
 // exercise-for-a-day, or on a whole day. All updates are immutable.
 
-import { DEFAULT_LIBRARY, mergeLibrary, type LibraryExercise } from './library.js';
+import { DEFAULT_LIBRARY, matchLibrary, mergeLibrary, slug, type LibraryExercise } from './library.js';
 
 export type Weekday = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
 export const WEEKDAYS: Weekday[] = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -79,6 +79,8 @@ export interface Exercise extends CellStyle {
   timedSec?: number;
   /** Library entry this exercise is (muscle groups, load); matched by name when absent. */
   lib?: string;
+  /** Free-text marks on the header, e.g. "!" (like "22kg!" in the sheet); shown after the weight. */
+  marks?: string;
 }
 
 export interface DayEntry extends CellStyle {
@@ -130,7 +132,8 @@ export interface Footnote {
   text: string;
 }
 
-export interface Week {
+/** `c` / `star` colour the week's label cell (the sheet had gold "Week 17/18" cells). */
+export interface Week extends CellStyle {
   id: string;
   label: string;
   startDate?: string;
@@ -141,6 +144,7 @@ export interface Week {
   footnotes: Record<string, Footnote[]>;
   /** Free text about the whole week (plans, discoveries). */
   notes?: string;
+  notesStyle?: CellStyle;
 }
 
 export const DEFAULT_LEGEND: LegendEntry[] = [
@@ -316,7 +320,7 @@ export function nextWeekLabelFrom(weeks: Week[], startDate?: string): string | u
 
 /** True when anything was logged: a set, another workout, notes, marks, bodyweight, a note in the notes row or a week note. */
 export function weekHasContent(week: Week): boolean {
-  if (week.notes?.trim()) return true;
+  if (week.notes?.trim() || week.c || week.star) return true;
   if (Object.values(week.footnotes).some((list) => list.some((f) => f.text.trim() !== ''))) return true;
   return week.days.some(
     (d) => dayTrained(d) || !!d.notes?.trim() || !!d.marks?.trim() || d.bodyweight !== undefined || !!d.c || !!d.star,
@@ -440,6 +444,89 @@ export function moveExercise(week: Week, exId: string, direction: -1 | 1): Week 
   return { ...week, exercises };
 }
 
+/** Legend id that flags a changed weight — the sheet's purple "Weight increased" header. */
+export const WEIGHT_CHANGED_COLOR = 'purple';
+
+function normWeight(w: string | undefined): string {
+  return (w ?? '').replace(/\s+/g, '').toLowerCase();
+}
+
+/**
+ * The same exercise the last time it was on the plan before `week`: the entry
+ * with the same id (a copied exercise keeps it), else one on the same library
+ * entry, else one with the same name. What its weight was decides whether the
+ * new weight counts as a change.
+ */
+export function previousExercise(weeks: Week[], week: Week, ex: Pick<Exercise, 'id' | 'name' | 'lib'>, library: LibraryExercise[]): Exercise | undefined {
+  const sorted = sortWeeks(weeks);
+  const idx = sorted.findIndex((w) => w.id === week.id);
+  const entry = matchLibrary(ex, library);
+  const key = ex.name.trim() ? slug(ex.name) : '';
+  for (let i = idx - 1; i >= 0; i--) {
+    const w = sorted[i];
+    if (!w) continue;
+    const hit =
+      w.exercises.find((e) => e.id === ex.id) ??
+      w.exercises.find((e) => (entry !== undefined && matchLibrary(e, library) === entry) || (key !== '' && slug(e.name) === key));
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/**
+ * Change an exercise's weight for the week. When it differs from what the
+ * exercise had the last time (`previousWeight`), the header turns purple —
+ * the sheet's way of showing the weight went up that week — and changing it
+ * back takes the purple off again. A colour picked by hand is left alone.
+ */
+export function setExerciseWeight(week: Week, exId: string, weight: string, previousWeight: string | undefined): Week {
+  const ex = week.exercises.find((e) => e.id === exId);
+  if (!ex) return week;
+  const patch: Partial<Omit<Exercise, 'id'>> = { weight };
+  if (previousWeight !== undefined) {
+    const changed = normWeight(weight) !== normWeight(previousWeight);
+    if (changed && !ex.c) patch.c = WEIGHT_CHANGED_COLOR;
+    else if (!changed && ex.c === WEIGHT_CHANGED_COLOR) patch.c = undefined;
+  }
+  return updateExercise(week, exId, patch);
+}
+
+// ---- Day-note suggestions -------------------------------------------------------
+
+/** Longest piece of a day note that is offered again as a suggestion. */
+export const NOTE_PIECE_MAX = 32;
+
+/** The short pieces of a note: what sits between commas or line breaks, without links. */
+export function splitNotePieces(text: string | undefined): string[] {
+  return (text ?? '')
+    .split(/[,\n]/)
+    .map((p) => p.trim())
+    .filter((p) => p !== '' && p.length <= NOTE_PIECE_MAX && !hasLink(p));
+}
+
+/**
+ * Things written in day notes before ("Pre-workout", "Coffee"), for the
+ * drop-down / auto-complete when a day's notes are typed: every short piece
+ * between commas or line breaks, most recently used first, one entry per
+ * spelling (case-insensitive, the latest spelling wins).
+ */
+export function noteSuggestions(weeks: Week[], limit = 60): string[] {
+  const seen = new Map<string, string>();
+  const ordered = sortWeeks(weeks);
+  for (let i = ordered.length - 1; i >= 0 && seen.size < limit; i--) {
+    const w = ordered[i];
+    if (!w) continue;
+    const days = sortDays(w.days).reverse();
+    for (const d of days) {
+      for (const piece of splitNotePieces(d.notes)) {
+        const k = piece.toLowerCase();
+        if (!seen.has(k)) seen.set(k, piece);
+      }
+    }
+  }
+  return [...seen.values()].slice(0, limit);
+}
+
 // ---- Days ------------------------------------------------------------------
 
 /** Days in weekday order (stable, so two entries on the same weekday keep their order). */
@@ -482,7 +569,7 @@ export function clearDay(week: Week, dayId: string, mark = true): Week {
  * the next week can still copy the exercises.
  */
 export function clearWeek(week: Week, today?: string): Week {
-  let w: Week = clean({ ...week, footnotes: {}, notes: undefined });
+  let w: Week = clean({ ...week, footnotes: {}, notes: undefined, notesStyle: undefined });
   for (const d of week.days) w = clearDay(w, d.id, !today || !d.date || d.date <= today);
   return w;
 }

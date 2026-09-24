@@ -62,6 +62,8 @@ export interface LibraryExercise {
   timedSec?: number;
   /** Default number of sets when added to a week. */
   sets?: number;
+  /** The weight last used ("26kg"): written on the exercise when it is added to a week again. */
+  weight?: string;
   /** Where the numbers come from, shown in the editor. */
   note?: string;
   /** Shipped with the app (can still be edited; "Restore built-in" brings it back). */
@@ -384,5 +386,15 @@ export function describeEntry(e: LibraryExercise): string {
   const sec = e.muscles.filter((m) => m.role === 'secondary').map((m) => muscleLabel(m.group));
   const muscles = [prim.join(', '), sec.length ? `+ ${sec.join(', ')}` : ''].filter(Boolean).join(' ');
   const load = e.load.kind === 'external' ? (e.load.dumbbells === 2 ? '2 dumbbells' : 'dumbbell') : e.load.kind === 'bodyweight' ? `${Math.round(e.load.factor * 100)} % of bodyweight` : e.timedSec ? 'timed hold' : 'no load';
-  return `${muscles} · ${load}`;
+  return `${muscles} · ${load}${e.weight ? ` · ${e.weight}` : ''}`;
+}
+
+/** The library with `weight` remembered on one entry (the last weight used, for the next time it is added to a week). */
+export function withDefaultWeight(library: LibraryExercise[], id: string, weight: string): LibraryExercise[] {
+  const w = weight.trim();
+  return library.map((e) => {
+    if (e.id !== id) return e;
+    const { weight: _old, ...rest } = e;
+    return w ? { ...rest, weight: w } : rest;
+  });
 }
