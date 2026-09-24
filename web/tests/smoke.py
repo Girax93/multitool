@@ -477,6 +477,84 @@ def main() -> int:
             page.click("[data-testid='session-off']")
             expect(panel).to_have_attribute("data-phase", "idle")
             expect(page.locator("[data-testid='session-duration']")).to_contain_text("Workout so far")  # the countdown was booked on today's row
+
+            # a reload mid-rest comes back to the same countdown (state kept per device)
+            page.click("[data-testid='session-rest-start']")
+            expect(panel).to_have_attribute("data-phase", "rest")
+            page.wait_for_timeout(400)
+            page.reload(wait_until="networkidle")
+            expect(page.locator("[data-testid='session']")).to_be_visible()
+            panel = page.locator("[data-testid='session-panel']")
+            expect(panel).to_have_attribute("data-phase", "rest", timeout=10_000)
+            expect(page.locator("[data-testid='session-countdown']")).to_have_text(re.compile(r"^1:[0-2]\d$"))
+            page.click("[data-testid='session-off']")
+            expect(panel).to_have_attribute("data-phase", "idle")
+
+            # the exercise's own rest (per set for the first set) via its header; a set starts with a tap (stopwatch),
+            # the reps typed start that rest; after the ring the overrun counts up until +step / Off
+            added_today = page.locator("[data-testid='session-add-today']").count() > 0  # this week = the first week; today may not be one of its rows
+            if added_today:
+                page.click("[data-testid='session-add-today']")
+            today_row = page.locator("[data-testid='session'] tr.wk-today")
+            expect(today_row).to_have_count(1)
+            page.locator("[data-testid='session'] [data-testid='exercise-header']").nth(1).click()  # rows
+            expect(page.locator(".sheet-panel")).to_be_visible()
+            page.locator("[data-testid='exercise-rest']").nth(1).fill("2")
+            page.locator("[data-testid='exercise-rest']").nth(1).dispatch_event("change")
+            expect(page.locator("[data-testid='exercise-rest']").nth(1)).to_have_value("0:02")
+            page.locator("[data-testid='exercise-rest-per-set']").nth(1).click()
+            expect(page.locator("[data-testid='exercise-rest-set']")).to_have_count(3)
+            expect(page.locator("[data-testid='exercise-rest-set']").first).to_have_value("0:02")
+            page.locator("[data-testid='exercise-rest-set']").first.fill("3")
+            page.locator("[data-testid='exercise-rest-set']").first.dispatch_event("change")
+            page.locator("[data-testid='exercise-note']").nth(1).fill("elbows in")
+            page.locator(".sheet-panel .btn-primary").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+            expect(page.locator("[data-testid='session'] [data-testid='exercise-note']")).to_have_text("elbows in")
+            rows_cell = today_row.locator("td.wk-cell").nth(4)  # rows, set 2 (empty whatever weekday it is)
+            rows_cell.locator("button").click()  # first tap: the stopwatch, no keyboard
+            expect(panel).to_have_attribute("data-phase", "watch")
+            expect(rows_cell.locator("[data-testid='set-live']")).to_be_visible()
+            expect(page.locator("[data-testid='set-inline']")).to_have_count(0)
+            page.wait_for_timeout(1200)
+            expect(page.locator("[data-testid='session-countdown']")).to_have_text(re.compile(r"^0:0[1-9]$"))
+            rows_cell.locator("button").click()  # second tap: type the reps
+            expect(page.locator("[data-testid='set-inline']")).to_be_focused()
+            page.fill("[data-testid='set-inline']", "10")
+            page.keyboard.press("Enter")
+            page.keyboard.press("Escape")
+            expect(panel).to_have_attribute("data-phase", "rest")
+            expect(panel).to_contain_text("Rest · Dumbbell Rows 2/3")
+            expect(panel).to_have_attribute("data-phase", "finished", timeout=8_000)  # the exercise's 2 s rest rang
+            expect(page.locator("[data-testid='session-countdown']")).to_have_text(re.compile(r"^−0:0\d$"), timeout=5_000)  # overrun counts up
+            page.click("[data-testid='session-plus']")  # rest on for another step
+            expect(panel).to_have_attribute("data-phase", "rest")
+            page.click("[data-testid='session-off']")
+            expect(panel).to_have_attribute("data-phase", "idle")
+            expect(rows_cell).to_have_text("10")
+            expect(page.locator("[data-testid='session-complete']")).to_be_visible()  # an open workout can be completed any time
+            page.screenshot(path=str(SHOTS / "12b-workout-mode-stopwatch.png"))
+
+            # the day's last set: no rest, but "complete the workout?"; complete → the panel says so, the next set reopens
+            cells = today_row.locator("td.wk-cell")
+            for i in range(cells.count()):
+                cell = cells.nth(i)
+                if cell.inner_text().strip():
+                    continue
+                cell.locator("button").click()  # stopwatch
+                expect(panel).to_have_attribute("data-phase", "watch")
+                cell.locator("button").click()  # type
+                expect(page.locator("[data-testid='set-inline']")).to_be_focused()
+                page.fill("[data-testid='set-inline']", "8")
+                page.keyboard.press("Enter")
+                page.keyboard.press("Escape")
+            expect(panel).to_have_attribute("data-phase", "finish")
+            expect(panel).to_contain_text("That was the last set")
+            page.click("[data-testid='session-complete']")
+            expect(panel).to_have_attribute("data-phase", "done")
+            expect(page.locator("[data-testid='session-duration']")).to_contain_text("Workout complete")
+            expect(page.locator("[data-testid='session-complete']")).to_have_count(0)
+            expect(page.locator("[data-testid='session-rest-start']")).to_have_count(0)
             page.click("[data-testid='session-back']")
             expect(page.locator("[data-testid='workout-grid']")).to_be_visible()
 
@@ -514,7 +592,7 @@ def main() -> int:
             page.click("[data-testid='day-clear']")
             page.locator(".sheet-panel .btn-danger", has_text="Mark as no workout").click()
             expect(page.locator(".sheet-panel")).to_have_count(0)
-            expect(page.locator("[data-testid='workout-grid'] tbody tr")).to_have_count(3)
+            expect(page.locator("[data-testid='workout-grid'] tbody tr")).to_have_count(3 + (1 if added_today else 0))
             expect(tue_row.locator("td.wk-cell").nth(0)).to_have_text("")
             expect(tue_row.locator("th")).to_have_class(re.compile(r"wk-tinted"))
             expect(tue_row.locator("[data-testid='day-header']")).not_to_contain_text("97.1 kg")

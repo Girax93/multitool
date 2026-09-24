@@ -13,13 +13,17 @@ import { cancelInline, commitInline, editInline, inlineTarget, type CommitVia } 
 import {
   addFootnote,
   clean,
+  completeSession,
   displayFootnotes,
+  formatSeconds,
   getSet,
   isNumbered,
   legendColor,
   noteSuggestions,
   removeFootnote,
+  sessionMinutes,
   splitLinks,
+  staleSessions,
   toTypedCell,
   typeSet,
   updateDay,
@@ -41,6 +45,21 @@ import { renderStats, resetStatsView } from './stats-view.js';
 
 /** The mounted root, so inline editing can find cells again after a re-render. */
 let root: HTMLElement | null = null;
+
+/**
+ * Workout mode's hook for taps on set cells in its grid (a first tap on an
+ * empty cell starts the set's stopwatch instead of opening the cell). Returns
+ * true when the tap was used. Only grids rendered with `session: true` ask it.
+ */
+export type SetTapHandler = (weekId: string, pos: SetPos) => boolean;
+let sessionTap: SetTapHandler | null = null;
+export function setSessionTapHandler(fn: SetTapHandler | null): void {
+  sessionTap = fn;
+}
+
+function tapHandled(td: HTMLElement, weekId: string, pos: SetPos): boolean {
+  return !!sessionTap && !!td.closest('[data-session]') && sessionTap(weekId, pos);
+}
 
 export function mountWorkoutView(host: HTMLElement, ctx: ToolContext, service: WorkoutService): ToolInstance {
   const unsubs: (() => void)[] = [];
@@ -128,6 +147,7 @@ export function mountWorkoutView(host: HTMLElement, ctx: ToolContext, service: W
       e.preventDefault();
       const pos: SetPos = { dayId: td.dataset['day'] ?? '', exId: td.dataset['ex'] ?? '', index: Number(td.dataset['set']) };
       commitInline();
+      if (tapHandled(td, weekId, pos)) return;
       editSetCell(service, weekId, pos);
     },
     true,
@@ -202,8 +222,45 @@ function renderLog(service: WorkoutService, ctx: ToolContext): HTMLElement {
     'div',
     { class: `wk wk-mode-${view.mode}`, dataset: { testid: 'workout' } },
     top,
+    renderStaleBanner(service, ctx, weeks),
     tabs,
     h('div', { class: 'wk-scroll' }, h('div', { class: 'wk-weeks' }, ...blocks)),
+  );
+}
+
+/**
+ * A workout logged in workout mode that was never completed and has been quiet
+ * for half an hour: one line above the log to complete it as ended at its last
+ * set (Ari: "some sort of system that catches me in case I forget").
+ */
+function renderStaleBanner(service: WorkoutService, ctx: ToolContext, weeks: Week[]): HTMLElement | null {
+  const stale = staleSessions(weeks, Date.now());
+  if (!stale.length) return null;
+  return h(
+    'div',
+    { class: 'wk-stale', dataset: { testid: 'stale-sessions' } },
+    ...stale.map(({ week, day }) => {
+      const end = new Date(day.session?.end ?? 0);
+      const when = end.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const minutes = sessionMinutes(day) ?? 0;
+      return h(
+        'div',
+        { class: 'wk-stale-row' },
+        h('span', { class: 'wk-stale-text' }, `${day.weekday}${day.date ? ` ${day.date.slice(5)}` : ''} (${week.label}): workout not completed — last activity ${when}, ${minutes} min so far.`),
+        h(
+          'button',
+          {
+            class: 'btn btn-sm btn-primary',
+            dataset: { testid: 'stale-complete' },
+            onClick: () => {
+              service.update(week.id, (w) => completeSession(w, day.id));
+              ctx.toast(`${day.weekday}'s workout marked complete (ended ${when})`);
+            },
+          },
+          `Complete (ended ${when})`,
+        ),
+      );
+    }),
   );
 }
 
@@ -729,7 +786,7 @@ function openWeekNotesMenu(x: number, y: number, service: WorkoutService, ctx: T
   });
 }
 
-export function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, settings: WorkoutSettings, opts: { highlightDayId?: string } = {}): HTMLElement {
+export function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week, settings: WorkoutSettings, opts: { highlightDayId?: string; session?: boolean } = {}): HTMLElement {
   const unit = settings.unit;
   const corner = h(
     'th',
@@ -746,14 +803,17 @@ export function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week
   applyStyle(corner, settings, week);
   const headRow = h('tr', null, corner);
   for (const ex of week.exercises) {
+    // Header lines: name / weight, time (+ marks) / note — empty lines are left out (Ari, 2026-09-24).
+    const facts = [ex.weight?.trim(), ex.timedSec ? formatSeconds(ex.timedSec) : ''].filter((x): x is string => !!x).join(', ');
     const th = h(
       'th',
       { colSpan: ex.sets, class: 'wk-ex', dataset: { ex: ex.id } },
       h(
         'button',
-        { class: 'wk-hbtn', dataset: { ex: ex.id, testid: 'exercise-header' }, title: 'Tap to edit the exercises; right-click or hold for colours and marks', onClick: () => openExercisesEditor(service, week.id, ex.id) },
+        { class: 'wk-hbtn', dataset: { ex: ex.id, testid: 'exercise-header' }, title: 'Tap to edit the exercise (weight, rest, timing); right-click or hold for colours and marks', onClick: () => openExercisesEditor(service, week.id, ex.id) },
         h('span', { class: 'wk-ex-name' }, ex.name || 'Exercise'),
-        ex.weight || ex.marks ? h('span', { class: 'wk-ex-weight' }, ex.weight ?? '', ex.marks ? h('span', { class: 'wk-marks' }, `${ex.weight ? ' ' : ''}${ex.marks}`) : null) : null,
+        facts || ex.marks ? h('span', { class: 'wk-ex-weight', dataset: { testid: 'exercise-facts' } }, facts, ex.marks ? h('span', { class: 'wk-marks' }, `${facts ? ' ' : ''}${ex.marks}`) : null) : null,
+        ex.note?.trim() ? h('span', { class: 'wk-ex-note', dataset: { testid: 'exercise-note' } }, ex.note.trim()) : null,
       ),
     );
     onContextAction(th, (x, y) => openExerciseMenu(x, y, service, week.id, ex.id));
@@ -811,7 +871,18 @@ export function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week
           const td = h(
             'td',
             { class: `wk-cell${i === 0 ? ' wk-cell-first' : ''}${i === ex.sets - 1 ? ' wk-cell-last' : ''}`, dataset: { day: day.id, ex: ex.id, set: String(i) } },
-            h('button', { class: 'wk-cbtn', title: 'Type reps and marks; . .. … add notes; right-click or hold for colours', onClick: () => editSetCell(service, week.id, pos) }, ...setContent(cell)),
+            h(
+              'button',
+              {
+                class: 'wk-cbtn',
+                title: opts.session ? 'Tap to start the set (stopwatch), tap again to type the reps; right-click or hold for colours' : 'Type reps and marks; . .. … add notes; right-click or hold for colours',
+                onClick: () => {
+                  if (tapHandled(td, week.id, pos)) return;
+                  editSetCell(service, week.id, pos);
+                },
+              },
+              ...setContent(cell),
+            ),
           );
           onContextAction(td, (x, y) => openSetMenu(x, y, service, ctx, week.id, pos));
           // A colour marks exactly what it was put on: the set, or the exercise for
@@ -855,7 +926,7 @@ export function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week
     body.appendChild(h('tr', null, h('td', { colSpan: 99, class: 'wk-empty-row' }, 'No training days — add some via the week menu.')));
   }
 
-  const table = h('table', { class: 'wk-table', dataset: { testid: 'workout-grid' } }, h('thead', null, headRow), body, renderNotesRow(service, ctx, week));
+  const table = h('table', { class: 'wk-table', dataset: opts.session ? { testid: 'workout-grid', session: '1' } : { testid: 'workout-grid' } }, h('thead', null, headRow), body, renderNotesRow(service, ctx, week));
   return h('div', { class: 'wk-grid' }, table);
 }
 

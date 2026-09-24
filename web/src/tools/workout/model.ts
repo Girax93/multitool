@@ -33,6 +33,8 @@ export interface SessionSettings {
   workSec: number;
   /** After the rest of the exercise before a timed one, offer to start it. */
   offerTimed: boolean;
+  /** Seconds to get into position before a timed set's countdown starts. */
+  prepSec: number;
 }
 
 export interface WorkoutSettings {
@@ -81,6 +83,14 @@ export interface Exercise extends CellStyle {
   lib?: string;
   /** Free-text marks on the header, e.g. "!" (like "22kg!" in the sheet); shown after the weight. */
   marks?: string;
+  /** A standing remark shown under the weight in the header ("x = wall, y = bench, z = floor"). */
+  note?: string;
+  /** Rest after a set of this exercise, seconds; absent = the tool's default. */
+  restSec?: number;
+  /** Rest after each set (index = set), seconds; an entry that is missing falls back to `restSec`. */
+  restPerSet?: (number | undefined)[];
+  /** Timed exercise: seconds to get into position before the hold counts down; absent = the tool's default. */
+  prepSec?: number;
 }
 
 export interface DayEntry extends CellStyle {
@@ -117,10 +127,15 @@ export interface DaySession {
   end: number;
   /** Seconds spent in rest countdowns. */
   restSec: number;
+  /** Marked complete (the button, the prompt after the last set, or the catch after a long pause). */
+  done?: boolean;
 }
 
 /** Activity more than this long after the last one starts a new session (a second workout that day). */
 export const SESSION_GAP_MS = 3 * 60 * 60 * 1000;
+
+/** With no activity for this long an open workout is presumably over: workout mode and the log ask to complete it. */
+export const SESSION_IDLE_MS = 30 * 60 * 1000;
 
 export interface Footnote {
   /**
@@ -165,7 +180,24 @@ export const DEFAULT_MARKS: MarkDef[] = [
   { symbol: '(x)', meaning: 'Different weight' },
 ];
 
-export const DEFAULT_SESSION: SessionSettings = { restSec: 90, stepSec: 30, workSec: 90, offerTimed: true };
+export const DEFAULT_SESSION: SessionSettings = { restSec: 90, stepSec: 30, workSec: 90, offerTimed: true, prepSec: 10 };
+
+/** Rest after set `index` (0-based) of an exercise: its per-set rest, else its own rest, else the tool's default. */
+export function restForSet(ex: Pick<Exercise, 'restSec' | 'restPerSet'>, index: number, settings: SessionSettings): number {
+  const perSet = ex.restPerSet?.[index];
+  const sec = perSet ?? ex.restSec ?? settings.restSec;
+  return Math.max(1, Math.round(sec));
+}
+
+/** Seconds of preparation before a timed set: the exercise's own, else the tool's default. */
+export function prepForExercise(ex: Pick<Exercise, 'prepSec'>, settings: SessionSettings): number {
+  return Math.max(0, Math.round(ex.prepSec ?? settings.prepSec));
+}
+
+/** Work seconds of a timed set: the exercise's own, else the tool's default. */
+export function workForExercise(ex: Pick<Exercise, 'timedSec'>, settings: SessionSettings): number {
+  return Math.max(1, Math.round(ex.timedSec || settings.workSec));
+}
 
 export const DEFAULT_SETTINGS: WorkoutSettings = {
   trackBodyweight: true,
@@ -265,8 +297,11 @@ export function newWeek(input: NewWeekInput): Week {
     if (previous?.startDate) startDate = addDays(previous.startDate, 7);
     else startDate = mondayOf(new Date(input.now));
   }
+  // The plan carries over (name, weight, sets, timing, rests, note, library link); colours and marks are the week's own.
   const exercises: Exercise[] = previous
-    ? previous.exercises.map((e) => clean({ id: e.id, name: e.name, weight: e.weight, sets: e.sets, timedSec: e.timedSec, lib: e.lib }))
+    ? previous.exercises.map((e) =>
+        clean({ id: e.id, name: e.name, weight: e.weight, sets: e.sets, timedSec: e.timedSec, lib: e.lib, note: e.note, restSec: e.restSec, restPerSet: e.restPerSet ? [...e.restPerSet] : undefined, prepSec: e.prepSec }),
+      )
     : [];
   const days = settings.defaultDays.map((wd, i) => newDay(input.dayIds[i] ?? `${input.id}-${wd}`, wd, startDate, exercises));
   return {
@@ -411,7 +446,15 @@ export function addExercise(week: Week, ex: Exercise): Week {
 }
 
 export function updateExercise(week: Week, exId: string, patch: Partial<Omit<Exercise, 'id'>>): Week {
-  const exercises = week.exercises.map((e) => (e.id === exId ? clean({ ...e, ...patch }) : e));
+  const exercises = week.exercises.map((e) => {
+    if (e.id !== exId) return e;
+    const next = clean({ ...e, ...patch });
+    // fewer sets: the per-set rests of the sets that are gone go too
+    if (patch.sets !== undefined && next.restPerSet && next.restPerSet.length > Math.max(1, patch.sets)) {
+      next.restPerSet = next.restPerSet.slice(0, Math.max(1, patch.sets));
+    }
+    return next;
+  });
   let days = week.days;
   if (patch.sets !== undefined) {
     const n = Math.max(1, patch.sets);
@@ -653,12 +696,41 @@ export function setDayWeekday(week: Week, dayId: string, weekday: Weekday): Week
 export function touchSession(week: Week, dayId: string, now: number, restSec = 0): Week {
   return withDay(week, dayId, (d) => {
     const cur = d.session;
+    // activity after "complete" reopens the workout (another set after all): `done` goes
     const session: DaySession =
       cur && now - cur.end <= SESSION_GAP_MS && now >= cur.start
         ? { start: cur.start, end: Math.max(cur.end, now), restSec: Math.round(cur.restSec + restSec) }
         : { start: now, end: now, restSec: Math.round(restSec) };
     return { ...d, session };
   });
+}
+
+/**
+ * Mark the day's workout complete. `at` is when it ended: now for the button,
+ * the last activity when it is caught later (the minutes after the last set
+ * were not training). A button press long after the last activity (more than
+ * SESSION_IDLE_MS) also ends at that last activity, so a forgotten workout is
+ * never counted as hours long. Without a session there is nothing to complete.
+ */
+export function completeSession(week: Week, dayId: string, at?: number): Week {
+  return withDay(week, dayId, (d) => {
+    if (!d.session) return d;
+    const end = at !== undefined && at - d.session.end <= SESSION_IDLE_MS ? Math.max(d.session.end, at) : d.session.end;
+    return { ...d, session: { ...d.session, end, done: true } };
+  });
+}
+
+/** Every set of every exercise on the day holds something (the day's last set has been typed). */
+export function dayComplete(week: Week, day: DayEntry): boolean {
+  if (week.exercises.length === 0) return false;
+  return week.exercises.every((ex) => exerciseDone(day, ex));
+}
+
+/** Days whose workout is still open although nothing has happened for `idleMs` — the ones to ask about. */
+export function staleSessions(weeks: Week[], now: number, idleMs = SESSION_IDLE_MS): { week: Week; day: DayEntry }[] {
+  const out: { week: Week; day: DayEntry }[] = [];
+  for (const week of weeks) for (const day of week.days) if (day.session && !day.session.done && now - day.session.end >= idleMs) out.push({ week, day });
+  return out;
 }
 
 /** Minutes a logged workout took (undefined when it was not timed). */

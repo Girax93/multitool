@@ -591,7 +591,14 @@ export function openExercisesEditor(service: WorkoutService, weekId: string, foc
     if (focus) {
       const el = sheet.body.querySelector<HTMLInputElement>(`input[data-ex="${focus}"]`);
       focus = undefined;
-      setTimeout(() => el?.focus(), 30);
+      // Focus the new row's name a moment later (the sheet is still settling) —
+      // unless something else in the sheet got focus in the meantime (a fast
+      // typist, or the test runner, already moved on to the weight field).
+      setTimeout(() => {
+        const active = document.activeElement;
+        if (active && active !== document.body && sheet.body.contains(active) && active !== el) return;
+        el?.focus();
+      }, 30);
     }
   };
 
@@ -638,6 +645,102 @@ export function openExercisesEditor(service: WorkoutService, weekId: string, foc
       if (sec && sec > 0) service.update(weekId, (x) => updateExercise(x, ex.id, { timedSec: sec }));
       else work.value = ex.timedSec ? formatSeconds(ex.timedSec) : '';
     });
+    // Prep before a timed hold (get into position); empty = the tool's default.
+    const session = service.settings.get().session;
+    const prep = h('input', {
+      type: 'text',
+      class: 'input input-short',
+      inputMode: 'numeric',
+      placeholder: formatSeconds(session.prepSec),
+      value: ex.prepSec !== undefined ? formatSeconds(ex.prepSec) : '',
+      'aria-label': 'Prep before each hold',
+      dataset: { testid: 'exercise-prep' },
+    });
+    prep.addEventListener('change', () => {
+      const sec = prep.value.trim() ? parseSeconds(prep.value) : null;
+      service.update(weekId, (x) => updateExercise(x, ex.id, { prepSec: sec !== null && sec >= 0 ? sec : undefined }));
+      prep.value = sec !== null && sec >= 0 ? formatSeconds(sec) : '';
+    });
+    const prepRow = h('div', { class: 'row', hidden: !ex.timedSec, dataset: { testid: 'exercise-prep-row' } }, h('span', { class: 'muted-inline' }, 'Prep'), prep, h('span', { class: 'muted-inline' }, 'before each hold'));
+    timed.addEventListener('change', () => {
+      prepRow.hidden = !timed.checked;
+    });
+    // A standing remark under the weight in the header ("x = wall, y = bench, z = floor").
+    const note = h('input', { type: 'text', class: 'input', placeholder: 'Note under the name (optional)', value: ex.note ?? '', dataset: { testid: 'exercise-note' } });
+    note.addEventListener('input', () => service.update(weekId, (x) => updateExercise(x, ex.id, { note: note.value })));
+    // Rest after a set: one value for the exercise, or one per set ("Per set"); empty = the tool's default.
+    const restField = (value: number | undefined, label: string, onChange: (sec: number | undefined) => void, testid: string): HTMLElement => {
+      const input = h('input', {
+        type: 'text',
+        class: 'input input-short',
+        inputMode: 'numeric',
+        placeholder: formatSeconds(session.restSec),
+        value: value !== undefined ? formatSeconds(value) : '',
+        'aria-label': label,
+        dataset: { testid },
+      });
+      input.addEventListener('change', () => {
+        const sec = input.value.trim() ? parseSeconds(input.value) : null;
+        const ok = sec !== null && sec > 0;
+        onChange(ok ? sec : undefined);
+        input.value = ok ? formatSeconds(sec) : '';
+      });
+      return input;
+    };
+    const perSet = !!ex.restPerSet?.length;
+    let restRow: HTMLElement;
+    if (perSet) {
+      const fields: HTMLElement[] = [];
+      for (let k = 0; k < ex.sets; k++) {
+        fields.push(
+          h(
+            'span',
+            { class: 'ex-rest-set' },
+            h('span', { class: 'muted-inline' }, `${k + 1}`),
+            restField(ex.restPerSet?.[k] ?? ex.restSec, `Rest after set ${k + 1}`, (sec) => {
+              service.update(weekId, (x) => {
+                const cur = x.exercises.find((e) => e.id === ex.id);
+                const list: (number | undefined)[] = Array.from({ length: cur?.sets ?? ex.sets }, (_, j) => cur?.restPerSet?.[j]);
+                list[k] = sec;
+                return updateExercise(x, ex.id, { restPerSet: list });
+              });
+            }, 'exercise-rest-set'),
+          ),
+        );
+      }
+      restRow = h(
+        'div',
+        { class: 'row ex-rest-row' },
+        h('span', { class: 'muted-inline' }, 'Rest'),
+        ...fields,
+        h('button', { type: 'button', class: 'btn btn-sm btn-text', dataset: { testid: 'exercise-rest-same' }, title: 'One rest for every set', onClick: () => { service.update(weekId, (x) => updateExercise(x, ex.id, { restPerSet: undefined })); render(); } }, 'Same for all'),
+      );
+    } else {
+      restRow = h(
+        'div',
+        { class: 'row ex-rest-row' },
+        h('span', { class: 'muted-inline' }, 'Rest'),
+        restField(ex.restSec, 'Rest after each set', (sec) => service.update(weekId, (x) => updateExercise(x, ex.id, { restSec: sec })), 'exercise-rest'),
+        h('span', { class: 'muted-inline' }, 'after each set'),
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn btn-sm btn-text',
+            dataset: { testid: 'exercise-rest-per-set' },
+            title: 'A different rest after each set',
+            onClick: () => {
+              service.update(weekId, (x) => {
+                const cur = x.exercises.find((e) => e.id === ex.id);
+                return updateExercise(x, ex.id, { restPerSet: Array.from({ length: cur?.sets ?? ex.sets }, () => cur?.restSec ?? session.restSec) });
+              });
+              render();
+            },
+          },
+          'Per set',
+        ),
+      );
+    }
     // Which library entry this is (muscle groups, load for the stats): the link, else the name match.
     const library = service.settings.get().library;
     const matched = matchLibrary(ex, library);
@@ -661,7 +764,10 @@ export function openExercisesEditor(service: WorkoutService, weekId: string, foc
         { class: 'ex-fields' },
         name,
         h('div', { class: 'row' }, weight, h('span', { class: 'muted-inline' }, '×'), sets, h('span', { class: 'muted-inline' }, 'sets')),
+        note,
+        restRow,
         h('div', { class: 'row' }, h('label', { class: 'check check-inline', title: 'Each set is a timed hold; workout mode counts it down' }, timed, h('span', null, 'Timed sets')), work),
+        prepRow,
         h('div', { class: 'row ex-lib-row' }, h('span', { class: 'muted-inline' }, 'Stats as'), libSel),
       ),
       h(

@@ -42,11 +42,11 @@ export function renderWorkoutSettings(service: WorkoutService, ctx: ToolContext)
   );
 
   // ---- workout mode
-  const sessionField = (key: 'restSec' | 'stepSec' | 'workSec', label: string, hint: string): HTMLElement => {
+  const sessionField = (key: 'restSec' | 'stepSec' | 'workSec' | 'prepSec', label: string, hint: string, min = 1): HTMLElement => {
     const input = h('input', { type: 'text', class: 'input input-short', inputMode: 'numeric', value: formatSeconds(s.session[key]), dataset: { testid: `setting-${key}` } });
     input.addEventListener('change', () => {
       const sec = parseSeconds(input.value);
-      if (sec && sec > 0) {
+      if (sec !== null && sec >= min) {
         const session: SessionSettings = { ...service.settings.get().session, [key]: sec };
         void service.updateSettings({ session });
         input.value = formatSeconds(sec);
@@ -58,10 +58,11 @@ export function renderWorkoutSettings(service: WorkoutService, ctx: ToolContext)
   offer.addEventListener('change', () => void service.updateSettings({ session: { ...service.settings.get().session, offerTimed: offer.checked } }));
   const sessionCard = section(
     'Workout mode',
-    h('p', { class: 'muted' }, 'Typing a set in workout mode starts the rest countdown (through the Timers tool). Times as m:ss or seconds.'),
-    sessionField('restSec', 'Rest between sets', 'e.g. 1:30'),
+    h('p', { class: 'muted' }, 'Typing a set in workout mode starts the rest countdown (through the Timers tool). Times as m:ss or seconds. An exercise can have its own rest and prep (tap its header).'),
+    sessionField('restSec', 'Rest between sets', 'unless the exercise says otherwise, e.g. 1:30'),
     sessionField('stepSec', '+ / − step', 'the +30 s / −30 s buttons'),
     sessionField('workSec', 'Work time for timed sets', 'default for new timed exercises, e.g. handstands'),
+    sessionField('prepSec', 'Prep before a timed set', 'time to get into position before the hold counts down', 0),
     h('div', { class: 'list-row' }, h('label', { class: 'list-main' }, h('span', { class: 'list-title' }, 'Offer timed exercises'), h('span', { class: 'list-sub' }, 'After the rest of the exercise before a timed one, ask to start it')), h('label', { class: 'switch' }, offer, h('span', { class: 'switch-track' }))),
   );
 

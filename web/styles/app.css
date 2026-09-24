@@ -1112,6 +1112,14 @@ body.sheet-open {
   font-weight: 500;
   color: var(--muted);
 }
+.wk-ex-note {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: normal;
+  max-width: 220px;
+  line-height: 1.25;
+}
 .wk-day {
   min-width: 72px;
 }
@@ -1783,6 +1791,20 @@ body.sheet-open {
 }
 .sess-count-done {
   animation: sess-blink 1s steps(2, start) infinite;
+  color: var(--danger, #e05252);
+}
+.sess-count-watch {
+  color: var(--accent);
+}
+/* the set being done right now: its stopwatch in the cell */
+.wk-cell-live > .wk-cbtn {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.wk-cell-live .wk-live {
+  display: inline-block;
 }
 @keyframes sess-blink {
   to {
@@ -2328,4 +2350,33 @@ body:has(.sess-panel) .toasts {
 .input-sm {
   min-height: 30px;
   padding: 2px 8px;
+}
+
+/* ---- "workout not completed" banner above the log ---- */
+.wk-stale {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.wk-stale-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.wk-stale-text {
+  font-size: 13px;
+}
+.sess-duration {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
 }

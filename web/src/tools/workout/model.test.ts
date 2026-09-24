@@ -2,6 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_SETTINGS,
+  SESSION_IDLE_MS,
+  completeSession,
+  dayComplete,
+  staleSessions,
   addDay,
   addExercise,
   addFootnote,
@@ -17,7 +21,9 @@ import {
   nextTimedExercise,
   parseSeconds,
   sessionDay,
+  sessionMinutes,
   weekForDate,
+  workForExercise,
   formatSet,
   getSet,
   hasLink,
@@ -29,7 +35,9 @@ import {
   nextFootnoteNumber,
   nextWeekLabelFrom,
   noteSuggestions,
+  prepForExercise,
   previousExercise,
+  restForSet,
   setExerciseWeight,
   splitNotePieces,
   numberedFootnotes,
@@ -44,6 +52,7 @@ import {
   splitLinks,
   toTypedCell,
   toggleRef,
+  touchSession,
   typeSet,
   updateDay,
   updateExercise,
@@ -55,6 +64,7 @@ import {
   weekNumbers,
   weekSummary,
   weekdayOfDate,
+  type Exercise,
   type SetCell,
   type Week,
 } from './model.js';
@@ -537,4 +547,66 @@ test('a set cell stored without v (emptied, or coloured while empty) reads and t
   // typing into such a cell works
   const typed = typeSet(stored, 'd1', 'chest', 2, '10!');
   assert.deepEqual(typed.days[0]?.cells['chest']?.sets[2], { v: '10!', c: 'green' });
+});
+
+test('rest per exercise / per set, prep and work fall back to the tool settings; new weeks carry them', () => {
+  const s = { ...DEFAULT_SETTINGS.session, restSec: 90, prepSec: 10, workSec: 60 };
+  const plain: Exercise = { id: 'a', name: 'Rows', weight: '', sets: 3 };
+  assert.equal(restForSet(plain, 0, s), 90);
+  assert.equal(restForSet({ ...plain, restSec: 120 }, 2, s), 120);
+  assert.equal(restForSet({ ...plain, restSec: 120, restPerSet: [60, undefined, 180] }, 0, s), 60);
+  assert.equal(restForSet({ ...plain, restSec: 120, restPerSet: [60, undefined, 180] }, 1, s), 120, 'a hole falls back to the exercise rest');
+  assert.equal(restForSet({ ...plain, restPerSet: [60] }, 2, s), 90, 'beyond the list: the tool default');
+  assert.equal(prepForExercise(plain, s), 10);
+  assert.equal(prepForExercise({ ...plain, prepSec: 0 }, s), 0, 'zero prep is a choice, not a fallback');
+  assert.equal(workForExercise({ ...plain }, s), 60);
+  assert.equal(workForExercise({ ...plain, timedSec: 90 }, s), 90);
+  // copied into the next week; colour and marks are not
+  let w = newWeek({ id: 'w1', dayIds: ['d1'], now: 0, settings: { ...DEFAULT_SETTINGS, defaultDays: ['Mon'] } });
+  w = addExercise(w, { id: 'hs', name: 'Handstand', weight: '', sets: 3, timedSec: 90, prepSec: 5, restSec: 100, restPerSet: [100, 110, 120], note: 'to the wall', c: 'purple', marks: '!' });
+  const next = newWeek({ id: 'w2', dayIds: ['d2'], now: 0, settings: DEFAULT_SETTINGS, previous: w });
+  assert.deepEqual(next.exercises[0], { id: 'hs', name: 'Handstand', sets: 3, timedSec: 90, prepSec: 5, restSec: 100, restPerSet: [100, 110, 120], note: 'to the wall' });
+  // fewer sets: the per-set rests of the sets that are gone go too
+  const fewer = updateExercise(w, 'hs', { sets: 2 });
+  assert.deepEqual(fewer.exercises[0]?.restPerSet, [100, 110]);
+  assert.equal(mergeSettings({}).session.prepSec, 10, 'stored settings without prepSec get the default');
+});
+
+test('completing a workout: the button, the last set, and the catch after a long pause', () => {
+  let w = newWeek({ id: 'w', dayIds: ['d1'], now: 0, settings: { ...DEFAULT_SETTINGS, defaultDays: ['Thu'] } });
+  w = addExercise(w, { id: 'a', name: 'Rows', weight: '', sets: 2 });
+  w = addExercise(w, { id: 'b', name: 'Curls', weight: '', sets: 1 });
+  const t0 = 1_000_000;
+  assert.equal(dayComplete(w, w.days[0]!), false);
+  w = typeSet(w, 'd1', 'a', 0, '10');
+  w = touchSession(w, 'd1', t0);
+  w = typeSet(w, 'd1', 'a', 1, '9');
+  w = touchSession(w, 'd1', t0 + 120_000, 90);
+  assert.equal(dayComplete(w, w.days[0]!), false, 'curls still open');
+  w = typeSet(w, 'd1', 'b', 0, '12');
+  w = touchSession(w, 'd1', t0 + 240_000, 90);
+  assert.equal(dayComplete(w, w.days[0]!), true, 'every set typed → the prompt');
+  assert.equal(completeSession(w, 'nope').days[0]?.session?.done, undefined, 'unknown day: nothing');
+  // the button, five minutes after the last set: ends now
+  const byButton = completeSession(w, 'd1', t0 + 540_000);
+  assert.deepEqual(byButton.days[0]?.session, { start: t0, end: t0 + 540_000, restSec: 180, done: true });
+  assert.equal(sessionMinutes(byButton.days[0]!), 9);
+  // the button an hour after the last set: the hour was not training → ends at the last activity too
+  assert.equal(completeSession(w, 'd1', t0 + 240_000 + 60 * 60_000).days[0]?.session?.end, t0 + 240_000);
+  // caught later: ends at the last activity
+  const caught = completeSession(w, 'd1');
+  assert.deepEqual(caught.days[0]?.session, { start: t0, end: t0 + 240_000, restSec: 180, done: true });
+  assert.equal(sessionMinutes(caught.days[0]!), 4);
+  // the catch: open for half an hour → listed; completed or fresh → not
+  assert.equal(staleSessions([w], t0 + 240_000 + SESSION_IDLE_MS - 1).length, 0);
+  assert.equal(staleSessions([w], t0 + 240_000 + SESSION_IDLE_MS).length, 1);
+  assert.equal(staleSessions([caught], t0 + 10 * SESSION_IDLE_MS).length, 0);
+  // a set typed after "complete" reopens the workout
+  const reopened = touchSession(byButton, 'd1', t0 + 600_000);
+  assert.equal(reopened.days[0]?.session?.done, undefined);
+  assert.equal(reopened.days[0]?.session?.end, t0 + 600_000);
+  // a day without a session cannot be completed (nothing was timed)
+  const plain = newWeek({ id: 'p', dayIds: ['x'], now: 0, settings: DEFAULT_SETTINGS });
+  assert.equal(completeSession(plain, 'x').days[0]?.session, undefined);
+  assert.equal(dayComplete(plain, plain.days[0]!), false, 'no exercises: never "complete"');
 });

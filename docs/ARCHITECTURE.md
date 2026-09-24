@@ -136,6 +136,33 @@ rest countdowns add what they actually ran (+30 s, early Off and Repeat
 included), and activity more than three hours after the last one starts a new
 session — which is where the stats page gets workout durations from.
 
+Since 2026-09-24 a set starts with a tap (Ari): in workout mode the first tap
+on an empty cell runs a stopwatch for that set (the time shows in the cell and
+in the panel; `setSessionTapHandler` in `view.ts` is how the grid asks the
+controller, only for grids rendered with `session: true`), a second tap opens
+the cell, and Enter starts the rest — the exercise's own rest (`Exercise.restSec`,
+or `restPerSet[i]` after set i, `restForSet`) or the tool's default. A timed
+exercise's empty cell starts prep → work for that set (`Exercise.prepSec` or
+`session.prepSec`, default 10 s) and the chain carries on rest → prep → work for
+the remaining sets. After a countdown rings the panel counts the overrun
+(−0:07) until Off, Repeat or +step (which runs the rest on for one step). The
+controller's state lives in `ui/session` (per device: phase, timer id,
+sequence by ids, stopwatch, `startedAt`), so a reload comes back to the same
+countdown, stopwatch or sequence; a countdown that rang while the page was
+away is settled on restore. The header shows name / weight, time / note
+(`Exercise.note`), empty lines left out.
+
+A workout is completed explicitly (`DaySession.done`, `completeSession`):
+the idle panel has a "Complete workout" button while a session is open; the
+day's last set (every set of every exercise typed, `dayComplete`) starts no
+rest but asks "That was the last set — complete?"; and a session with no
+activity for `SESSION_IDLE_MS` (30 min) is caught — the panel asks "Still
+working out?" (Still going snoozes for another half hour; Complete ends it at
+the last activity) and the log shows a banner (`staleSessions`) with the same
+one-tap completion. The button ends the workout now unless the last activity
+is more than 30 min back, in which case it ends there too. Typing a set again
+reopens the day (`touchSession` drops `done`); notes never touch the session.
+
 **Exercise library** (`tools/workout/library.ts`, pure and unit-tested; edited
 in Settings → Exercises, stored in `settings.library` so it syncs, merged with
 the built-ins by id so edits win, deletions stick (`libraryRemoved`) and new
