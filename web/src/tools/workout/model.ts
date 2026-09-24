@@ -354,8 +354,10 @@ export function getExerciseDay(week: Week, dayId: string, exId: string): Exercis
   return week.days.find((d) => d.id === dayId)?.cells[exId];
 }
 
+/** The set cell, always with a string `v` (stored cells drop an empty `v`). */
 export function getSet(week: Week, dayId: string, exId: string, index: number): SetCell {
-  return getExerciseDay(week, dayId, exId)?.sets[index] ?? { v: '' };
+  const cell = getExerciseDay(week, dayId, exId)?.sets[index];
+  return cell ? { ...cell, v: cell.v ?? '' } : { v: '' };
 }
 
 function withDay(week: Week, dayId: string, fn: (d: DayEntry) => DayEntry): Week {
@@ -375,7 +377,9 @@ export function updateSet(week: Week, dayId: string, exId: string, index: number
     const sets = [...ed.sets];
     while (sets.length <= index) sets.push({ v: '' });
     const cur = sets[index] ?? { v: '' };
-    sets[index] = clean({ ...cur, ...patch });
+    // keep `v` even when empty, so a coloured or cleared cell still reads as a cell
+    const next = clean({ ...cur, ...patch });
+    sets[index] = { ...next, v: next.v ?? '' };
     return { ...ed, sets };
   });
 }
@@ -708,10 +712,13 @@ export function ensureFootnote(week: Week, exId: string, n: number): Week {
  * "12! . .."), so `parseLegacyCell` reads it back unchanged.
  */
 export function toTypedCell(cell: SetCell): string {
+  // A stored cell may lack `v` (an emptied cell is `clean`ed to {} or {c}):
+  // it types as empty, never as the string "undefined".
+  const v = cell.v ?? '';
   const runs = (cell.fn ?? []).map((n) => '.'.repeat(n));
-  if (runs.length === 0) return cell.v;
-  if (runs.length === 1) return cell.v + runs[0];
-  return `${cell.v} ${runs.join(' ')}`.trim();
+  if (runs.length === 0) return v;
+  if (runs.length === 1) return v + runs[0];
+  return `${v} ${runs.join(' ')}`.trim();
 }
 
 /**

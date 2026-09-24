@@ -219,6 +219,36 @@ def main() -> int:
             page.locator(".sheet-panel button", has_text="Done").click()
             expect(page.locator(".sheet-panel")).to_have_count(0)
 
+            # regression (Ari, 2026-09-24 mid-workout): a cell coloured while empty, or cleared, showed
+            # "undefined" when opened and could not be typed into
+            empty_cell = first_row.locator("td.wk-cell").nth(5)  # rows set 3, never typed
+            empty_cell.click(button="right")
+            page.locator("[data-testid='popover'] .swatch").nth(1).click()  # green on an empty cell
+            page.keyboard.press("Escape")
+            empty_cell.locator("button").click()
+            expect(page.locator("[data-testid='set-inline']")).to_have_value("")
+            page.fill("[data-testid='set-inline']", "10")
+            page.keyboard.press("Enter")
+            page.keyboard.press("Escape")
+            expect(empty_cell).to_have_text("10")
+            empty_cell.click(button="right")
+            page.locator("[data-testid='popover'] button", has_text="Clear").click()
+            expect(empty_cell).to_have_text("")
+            empty_cell.locator("button").click()
+            expect(page.locator("[data-testid='set-inline']")).to_have_value("")
+            page.fill("[data-testid='set-inline']", "11")
+            page.keyboard.press("Enter")
+            page.keyboard.press("Escape")
+            expect(empty_cell).to_have_text("11")
+            empty_cell.click(button="right")
+            page.locator("[data-testid='popover'] button", has_text="Clear").click()
+            expect(empty_cell).to_have_text("")
+            empty_cell.click(button="right")
+            page.click("[data-testid='menu-set-editor']")  # the sheet editor reads the cleared cell as empty too
+            expect(page.locator("[data-testid='set-input']")).to_have_value("")
+            page.locator(".sheet-panel button", has_text="Done").click()
+            expect(page.locator(".sheet-panel")).to_have_count(0)
+
             # every other cell has a menu too: exercise header (colour + marks), day cell (colour + marks), week label, week note
             pop = page.locator("[data-testid='popover']")
             grid.locator("th.wk-ex").nth(1).click(button="right")

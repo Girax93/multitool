@@ -55,6 +55,7 @@ import {
   weekNumbers,
   weekSummary,
   weekdayOfDate,
+  type SetCell,
   type Week,
 } from './model.js';
 
@@ -299,7 +300,7 @@ test('typing into a set cell: value, marks, dot references; missing notes are cr
   }
   // clearing the text clears the references too, notes stay
   w = typeSet(w, 'd1', 'squat', 0, '');
-  assert.deepEqual(getSet(w, 'd1', 'squat', 0), { c: 'green' }); // an empty value is not stored (clean)
+  assert.deepEqual(getSet(w, 'd1', 'squat', 0), { v: '', c: 'green' }); // the cell keeps an empty v (it used to be cleaned away, which showed "undefined" in the editor)
   assert.equal(w.footnotes['squat']?.length, 2);
 });
 
@@ -515,4 +516,25 @@ test('note suggestions: short comma-separated pieces of earlier day notes, newes
   assert.deepEqual(noteSuggestions(weeks), ['Thursday.', 'Pre-workout', 'Coffee', 'Sick'], 'newest day first; one entry per spelling, the latest spelling wins');
   assert.deepEqual(noteSuggestions(weeks, 2), ['Thursday.', 'Pre-workout']);
   assert.deepEqual(noteSuggestions([]), []);
+});
+
+test('a set cell stored without v (emptied, or coloured while empty) reads and types as empty — never "undefined"', () => {
+  assert.equal(toTypedCell({} as SetCell), '');
+  assert.equal(toTypedCell({ c: 'green' } as SetCell), '');
+  assert.equal(toTypedCell({ fn: [1] } as SetCell), '.');
+  assert.equal(formatSet({} as SetCell), '');
+  let w = newWeek({ id: 'w', dayIds: ['d1'], now: 0, settings: { ...DEFAULT_SETTINGS, defaultDays: ['Thu'] } });
+  w = addExercise(w, { id: 'chest', name: 'Chest Press', weight: '24kg', sets: 3 });
+  // a colour on an empty cell used to clean `v` away; the stored cell keeps v: ''
+  w = updateSet(w, 'd1', 'chest', 2, { c: 'green' });
+  assert.deepEqual(w.days[0]?.cells['chest']?.sets[2], { v: '', c: 'green' });
+  // and however the cell got stored, getSet always hands back a string
+  const stored: Week = { ...w, days: [{ ...w.days[0]!, cells: { chest: { sets: [{ v: '12' }, {} as SetCell, { c: 'green' } as SetCell] } } }] };
+  assert.equal(getSet(stored, 'd1', 'chest', 1).v, '');
+  assert.equal(getSet(stored, 'd1', 'chest', 2).v, '');
+  assert.equal(getSet(stored, 'd1', 'chest', 2).c, 'green');
+  assert.equal(toTypedCell(getSet(stored, 'd1', 'chest', 2)), '');
+  // typing into such a cell works
+  const typed = typeSet(stored, 'd1', 'chest', 2, '10!');
+  assert.deepEqual(typed.days[0]?.cells['chest']?.sets[2], { v: '10!', c: 'green' });
 });
