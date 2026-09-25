@@ -26,6 +26,19 @@ export interface Timer {
   remainingMs?: number;
   /** Epoch ms when the timer was noticed to be finished. */
   finishedAt?: number;
+  /**
+   * Installation id of the device that started the current run. Timers sync to
+   * every linked device, but only this one schedules the alarm and rings;
+   * absent on records written by older app versions (those ring everywhere).
+   */
+  device?: string;
+  /** Human-readable name of that device ("Android app"), for the other devices' lists. */
+  deviceName?: string;
+}
+
+/** Does a timer's run belong to this device? Legacy records without a device ring everywhere. */
+export function ownedBy(t: Timer, deviceId: string): boolean {
+  return t.device === undefined || t.device === deviceId;
 }
 
 export interface DurationParts {
@@ -125,13 +138,23 @@ export function createTimer(input: { id: string; name: string; durationMs: numbe
   };
 }
 
+/** The device a run belongs to (see Timer.device). */
+export interface DeviceTag {
+  id: string;
+  name: string;
+}
+
 function reset(t: Timer): Timer {
-  const { startedAt: _s, endsAt: _e, remainingMs: _r, finishedAt: _f, ...rest } = t;
+  const { startedAt: _s, endsAt: _e, remainingMs: _r, finishedAt: _f, device: _d, deviceName: _n, ...rest } = t;
   return { ...rest, state: 'idle' };
 }
 
-export function startTimer(t: Timer, now: number): Timer {
-  return { ...reset(t), state: 'running', startedAt: now, endsAt: now + t.durationMs };
+function tagged(t: Timer, device?: DeviceTag): Timer {
+  return device ? { ...t, device: device.id, deviceName: device.name } : t;
+}
+
+export function startTimer(t: Timer, now: number, device?: DeviceTag): Timer {
+  return tagged({ ...reset(t), state: 'running', startedAt: now, endsAt: now + t.durationMs }, device);
 }
 
 export function pauseTimer(t: Timer, now: number): Timer {
@@ -140,19 +163,19 @@ export function pauseTimer(t: Timer, now: number): Timer {
   return { ...rest, state: 'paused', remainingMs: Math.max(0, t.endsAt - now) };
 }
 
-export function resumeTimer(t: Timer, now: number): Timer {
+export function resumeTimer(t: Timer, now: number, device?: DeviceTag): Timer {
   if (t.state !== 'paused') return t;
   const remaining = t.remainingMs ?? t.durationMs;
   const { remainingMs: _r, ...rest } = t;
-  return { ...rest, state: 'running', startedAt: now - (t.durationMs - remaining), endsAt: now + remaining };
+  return tagged({ ...rest, state: 'running', startedAt: now - (t.durationMs - remaining), endsAt: now + remaining }, device);
 }
 
 export function stopTimer(t: Timer): Timer {
   return reset(t);
 }
 
-export function restartTimer(t: Timer, now: number): Timer {
-  return startTimer(t, now);
+export function restartTimer(t: Timer, now: number, device?: DeviceTag): Timer {
+  return startTimer(t, now, device);
 }
 
 /**

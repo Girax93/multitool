@@ -6,7 +6,7 @@
 // every chart ("empty weeks should still be noticeable").
 
 import { MUSCLE_GROUPS, libraryIndex, loadPerRep, roleWeight, type LibraryExercise, type MuscleGroup } from './library.js';
-import { addDays, fromIsoDate, mondayOf, sessionMinutes, weekNumbers, type DayEntry, type Exercise, type Week } from './model.js';
+import { addDays, fromIsoDate, mondayOf, sessionMinutes, sortDays, sortWeeks, weekNumbers, type DayEntry, type Exercise, type Week } from './model.js';
 
 // ---- Set notation --------------------------------------------------------------
 
@@ -326,15 +326,18 @@ export function exerciseProgress(weeks: Week[], key: string, range: StatsRange, 
       for (const d of w.days) {
         if (d.alt?.trim()) continue;
         const bw = d.bodyweight ?? (d.date ? bodyweightOn(weights, d.date) : undefined);
+        const timed = !!ex.timedSec || !!entry?.timedSec;
         for (const s of d.cells[ex.id]?.sets ?? []) {
           const p = parseSetValue(s.v);
           if (!p.logged) continue;
           out.sets++;
+          const kg = loadPerRep(entry, planWeight, bw, p.weight);
+          // a hold carries its load once per set; the cell's number is falls or seconds
+          if (timed && kg !== undefined) volume = (volume ?? 0) + Math.round(kg);
           if (p.reps === undefined) continue;
           best = Math.max(best ?? 0, p.reps);
           total = (total ?? 0) + p.reps;
-          const kg = loadPerRep(entry, planWeight, bw, p.weight);
-          if (kg !== undefined) volume = (volume ?? 0) + Math.round(p.reps * kg);
+          if (!timed && kg !== undefined) volume = (volume ?? 0) + Math.round(p.reps * kg);
         }
       }
     }
@@ -390,6 +393,7 @@ export function setRecords(weeks: Week[], range: StatsRange, library: LibraryExe
       for (const ex of w.exercises) {
         const entry = index.get(ex.id);
         const planWeight = parseWeight(ex.weight);
+        const timed = !!ex.timedSec || !!entry?.timedSec;
         for (const s of d.cells[ex.id]?.sets ?? []) {
           const p = parseSetValue(s.v);
           if (!p.logged) continue;
@@ -402,7 +406,9 @@ export function setRecords(weeks: Week[], range: StatsRange, library: LibraryExe
             muscles: (entry?.muscles ?? []).map((m) => ({ group: m.group, weight: roleWeight(m.role) })),
           };
           if (p.reps !== undefined) rec.reps = p.reps;
-          if (p.reps !== undefined && perRep !== undefined) rec.load = Math.round(p.reps * perRep);
+          // a hold carries its load once per set (the cell's number is falls or seconds)
+          if (timed && perRep !== undefined) rec.load = Math.round(perRep);
+          else if (p.reps !== undefined && perRep !== undefined) rec.load = Math.round(p.reps * perRep);
           out.push(rec);
         }
       }
@@ -488,6 +494,42 @@ export function exerciseTotals(weeks: Week[], range: StatsRange, library: Librar
     map.set(r.exKey, cur);
   }
   return [...map.values()].sort((a, b) => b.sets - a.sets);
+}
+
+export interface TagTotal {
+  tag: string;
+  /** Days in the range carrying the mark. */
+  days: number;
+  /** Their dates, newest first. */
+  dates: string[];
+  /** The latest such day's week, for opening it. */
+  weekId?: string;
+}
+
+/**
+ * Days per word mark ("Pre-workout") in the range, most used first: the
+ * tracking view for the marks ticked on days. Spelling differences in case
+ * fold together (the latest spelling shows).
+ */
+export function tagTotals(weeks: Week[], range: StatsRange): TagTotal[] {
+  const end = addDays(range.to, 7);
+  const map = new Map<string, TagTotal>();
+  for (const w of sortWeeks(weeks)) {
+    if (!w.startDate || w.startDate < range.from || w.startDate >= end) continue;
+    for (const d of sortDays(w.days)) {
+      const date = d.date ?? w.startDate;
+      for (const tag of d.tags ?? []) {
+        const k = tag.toLowerCase();
+        const cur = map.get(k) ?? { tag, days: 0, dates: [] };
+        cur.tag = tag;
+        cur.days++;
+        cur.dates.unshift(date);
+        cur.weekId = w.id;
+        map.set(k, cur);
+      }
+    }
+  }
+  return [...map.values()].sort((a, b) => b.days - a.days || a.tag.localeCompare(b.tag));
 }
 
 export interface VolumeWeek extends WeekSlot {

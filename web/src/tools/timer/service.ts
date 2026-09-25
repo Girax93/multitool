@@ -5,11 +5,13 @@
 import type { ToolContext } from '../../core/registry.js';
 import { signal, type Signal } from '../../core/store.js';
 import { uid } from '../../core/dom.js';
+import { describeDevice, installationId } from '../../core/device.js';
 import {
   alarmId,
   createTimer,
   extendTimer,
   finishTimer,
+  ownedBy,
   pauseTimer,
   reconcile,
   restartTimer,
@@ -17,6 +19,7 @@ import {
   startTimer,
   stopTimer,
   timerIdFromAlarm,
+  type DeviceTag,
   type Timer,
 } from './model.js';
 
@@ -37,8 +40,21 @@ export class TimerService {
   private loaded = false;
   /** What is on disk, by id, so persist() only writes what changed. */
   private persisted = new Map<string, Timer>();
+  /**
+   * Runs are stamped with the device that started them: timers sync to every
+   * linked device, but only the starting device schedules the alarm and rings
+   * (Ari: "All alarms/rings should only ring on the device it was started on").
+   */
+  private readonly device: DeviceTag;
 
-  constructor(private readonly ctx: ToolContext) {}
+  constructor(private readonly ctx: ToolContext) {
+    this.device = { id: installationId(), name: describeDevice(ctx.native.info()) };
+  }
+
+  /** Does this run belong to this device (and so ring here)? */
+  mine(t: Timer): boolean {
+    return ownedBy(t, this.device.id);
+  }
 
   async init(): Promise<void> {
     const stored = await this.load();
@@ -62,7 +78,7 @@ export class TimerService {
         }
         case 'alarm-restarted': {
           const id = timerIdFromAlarm(e.id);
-          if (id) this.mutate(id, (t) => ({ ...restartTimer(t, e.at - t.durationMs), endsAt: e.at }), false);
+          if (id) this.mutate(id, (t) => ({ ...restartTimer(t, e.at - t.durationMs, this.device), endsAt: e.at }), false);
           break;
         }
         case 'resume':
@@ -80,7 +96,7 @@ export class TimerService {
   add(input: { name: string; durationMs: number; saved: boolean; start: boolean }): Timer {
     const now = Date.now();
     let t = createTimer({ id: uid('t'), name: input.name, durationMs: input.durationMs, saved: input.saved, now });
-    if (input.start) t = startTimer(t, now);
+    if (input.start) t = startTimer(t, now, this.device);
     this.setTimers([...this.timers.get(), t]);
     if (input.start) this.scheduleAlarm(t);
     return t;
@@ -95,7 +111,7 @@ export class TimerService {
   }
 
   start(id: string): void {
-    this.mutate(id, (t) => startTimer(t, Date.now()));
+    this.mutate(id, (t) => startTimer(t, Date.now(), this.device));
   }
 
   pause(id: string): void {
@@ -103,7 +119,7 @@ export class TimerService {
   }
 
   resume(id: string): void {
-    this.mutate(id, (t) => resumeTimer(t, Date.now()));
+    this.mutate(id, (t) => resumeTimer(t, Date.now(), this.device));
   }
 
   /** Stop a running/paused timer. One-off timers are removed; saved ones go idle. */
@@ -115,7 +131,7 @@ export class TimerService {
   }
 
   restart(id: string): void {
-    this.mutate(id, (t) => restartTimer(t, Date.now()));
+    this.mutate(id, (t) => restartTimer(t, Date.now(), this.device));
   }
 
   /** Add or remove time while a timer runs (+30 s / −30 s); the alarm is rescheduled. */
@@ -127,7 +143,7 @@ export class TimerService {
   restartWith(id: string, durationMs: number): void {
     const now = Date.now();
     this.ctx.native.cancelNotification(alarmId(id));
-    this.mutate(id, (t) => startTimer({ ...t, durationMs }, now));
+    this.mutate(id, (t) => startTimer({ ...t, durationMs }, now, this.device));
   }
 
   /** "Off" after ringing. One-off timers disappear; saved ones return to idle. */
@@ -168,7 +184,7 @@ export class TimerService {
   }
 
   private scheduleAlarm(t: Timer): void {
-    if (t.state !== 'running' || t.endsAt === undefined) return;
+    if (t.state !== 'running' || t.endsAt === undefined || !this.mine(t)) return;
     this.ctx.native.scheduleAlarm({
       id: alarmId(t.id),
       at: t.endsAt,
@@ -218,9 +234,10 @@ export class TimerService {
       const after = reconcile(incoming, now);
       this.persisted.set(id, incoming);
       list = before ? list.map((t) => (t.id === id ? after : t)) : [...list, after];
-      if (after.state === 'running' && (before?.state !== 'running' || before.endsAt !== after.endsAt)) {
+      if (after.state === 'running' && this.mine(after) && (before?.state !== 'running' || before.endsAt !== after.endsAt)) {
         this.scheduleAlarm(after);
-      } else if (after.state !== 'running' && before?.state === 'running') {
+      } else if (before?.state === 'running' && (after.state !== 'running' || !this.mine(after))) {
+        // stopped, or taken over by another device (it resumed / restarted the timer there)
         this.ctx.native.cancelAlarm(alarmId(id));
       }
       if (after.state !== 'finished' && before?.state === 'finished') this.ctx.native.cancelNotification(alarmId(id));
@@ -294,13 +311,14 @@ export class TimerService {
     if (next.some((t, i) => t !== list[i])) {
       this.setTimers(next);
       // On the web the bridge already fired a notification via setTimeout; on
-      // Android the shell's alarm does. Either way, make sure the user notices.
-      this.ctx.native.vibrate([200, 100, 200]);
+      // Android the shell's alarm does. Either way, make sure the user notices
+      // — unless the timer belongs to another device, which rings there.
+      if (next.some((t, i) => t !== list[i] && this.mine(t))) this.ctx.native.vibrate([200, 100, 200]);
     }
   }
 
   private updateRinger(): void {
-    const ringing = this.timers.get().some((t) => t.state === 'finished');
+    const ringing = this.timers.get().some((t) => t.state === 'finished' && this.mine(t));
     // The Android shell plays the alarm sound itself; in a browser we beep.
     const shouldRing = ringing && this.ctx.native.info().platform === 'web';
     if (shouldRing && !this.ringer) {

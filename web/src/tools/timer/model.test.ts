@@ -13,6 +13,7 @@ import {
   formatCountdown,
   formatDuration,
   msToParts,
+  ownedBy,
   parseDurationText,
   partsToMs,
   pauseTimer,
@@ -154,4 +155,27 @@ test('extend moves the end of a running timer and finishes it when shortened pas
   const paused = extendTimer(pauseTimer(shorter, 31_000), 5_000, 31_000);
   assert.equal(paused.remainingMs, 65_000);
   assert.equal(extendTimer(t0, 0, 5).durationMs, 90_000);
+});
+
+test('a run is stamped with the device that started it and only that device owns it', () => {
+  const phone = { id: 'd-phone', name: 'Android app' };
+  const pc = { id: 'd-pc', name: 'Chrome on Windows' };
+  const t0 = createTimer({ id: 'x', name: 'Rest', durationMs: 90_000, saved: true, now: 1_000 });
+  assert.equal(ownedBy(t0, 'anything'), true, 'legacy / idle records have no device and ring everywhere');
+  const running = startTimer(t0, 1_000, phone);
+  assert.equal(running.device, 'd-phone');
+  assert.equal(running.deviceName, 'Android app');
+  assert.equal(ownedBy(running, 'd-phone'), true);
+  assert.equal(ownedBy(running, 'd-pc'), false);
+  assert.equal(extendTimer(running, 30_000, 2_000).device, 'd-phone', '+30 s keeps the owner');
+  const paused = pauseTimer(running, 5_000);
+  assert.equal(paused.device, 'd-phone');
+  const resumedOnPc = resumeTimer(paused, 6_000, pc);
+  assert.equal(resumedOnPc.device, 'd-pc', 'resuming elsewhere hands the run to that device');
+  assert.equal(finishTimer(resumedOnPc, 100_000).device, 'd-pc');
+  const stopped = stopTimer(resumedOnPc);
+  assert.equal(stopped.device, undefined, 'an idle timer belongs to nobody');
+  assert.equal(stopped.deviceName, undefined);
+  assert.equal(restartTimer(stopped, 200_000, phone).device, 'd-phone');
+  assert.equal(startTimer(t0, 1_000).device, undefined, 'without a tag the run stays untagged');
 });

@@ -27,6 +27,12 @@ import {
   formatSet,
   getSet,
   hasLink,
+  DEFAULT_MARKS,
+  isWordMark,
+  tokenizeMarks,
+  toggleSymbol,
+  toggleDayMark,
+  dayHasMark,
   isoWeek,
   mondayOf,
   moveExercise,
@@ -34,12 +40,10 @@ import {
   newWeek,
   nextFootnoteNumber,
   nextWeekLabelFrom,
-  noteSuggestions,
   prepForExercise,
   previousExercise,
   restForSet,
   setExerciseWeight,
-  splitNotePieces,
   numberedFootnotes,
   pageTabLabel,
   parseLegacyCell,
@@ -505,29 +509,6 @@ test('a changed weight turns the header purple; the same weight takes it off aga
   assert.equal(setExerciseWeight(w86, 'nope', '1kg', '2kg'), w86, 'unknown exercise: unchanged');
 });
 
-test('note suggestions: short comma-separated pieces of earlier day notes, newest first', () => {
-  const mk = (id: string, startDate: string, notes: (string | undefined)[]): Week => ({
-    id,
-    label: id,
-    startDate,
-    createdAt: 0,
-    exercises: [],
-    days: notes.map((n, i) => ({ id: `${id}-${i}`, weekday: (['Mon', 'Wed', 'Fri'] as const)[i] ?? 'Mon', cells: {}, ...(n ? { notes: n } : {}) })),
-    footnotes: {},
-  });
-  assert.deepEqual(splitNotePieces('Pre-workout, 30mg Lis,  , Coffee\nSlept badly'), ['Pre-workout', '30mg Lis', 'Coffee', 'Slept badly']);
-  assert.deepEqual(splitNotePieces('See https://example.com/x, ok'), ['ok'], 'links are not suggestions');
-  assert.deepEqual(splitNotePieces('a'.repeat(33)), [], 'long sentences are not suggestions');
-  assert.deepEqual(splitNotePieces(undefined), []);
-  const weeks = [
-    mk('w1', '2026-09-07', ['coffee, Sick', undefined, 'Pre-workout']),
-    mk('w2', '2026-09-14', ['Pre-workout, Coffee', 'Thursday.', undefined]),
-  ];
-  assert.deepEqual(noteSuggestions(weeks), ['Thursday.', 'Pre-workout', 'Coffee', 'Sick'], 'newest day first; one entry per spelling, the latest spelling wins');
-  assert.deepEqual(noteSuggestions(weeks, 2), ['Thursday.', 'Pre-workout']);
-  assert.deepEqual(noteSuggestions([]), []);
-});
-
 test('a set cell stored without v (emptied, or coloured while empty) reads and types as empty — never "undefined"', () => {
   assert.equal(toTypedCell({} as SetCell), '');
   assert.equal(toTypedCell({ c: 'green' } as SetCell), '');
@@ -609,4 +590,30 @@ test('completing a workout: the button, the last set, and the catch after a long
   const plain = newWeek({ id: 'p', dayIds: ['x'], now: 0, settings: DEFAULT_SETTINGS });
   assert.equal(completeSession(plain, 'x').days[0]?.session, undefined);
   assert.equal(dayComplete(plain, plain.days[0]!), false, 'no exercises: never "complete"');
+});
+
+test('marks: symbols tokenize longest-first like the sheet, word marks are day tags', () => {
+  const symbols = DEFAULT_MARKS.map((m) => m.symbol).concat(['Pre-workout', 'Creatine']);
+  assert.equal(isWordMark('Pre-workout'), true);
+  assert.equal(isWordMark('30mg'), true);
+  assert.equal(isWordMark('*'), false);
+  assert.equal(isWordMark('(x)'), false);
+  assert.deepEqual(tokenizeMarks('***', symbols), ['***'], 'pain, not three bad sleeps');
+  assert.deepEqual(tokenizeMarks('*!', symbols), ['*', '!']);
+  assert.deepEqual(tokenizeMarks('**!*', symbols), ['**', '!', '*']);
+  assert.deepEqual(tokenizeMarks('⭐⭐ (x)', symbols), ['⭐', '⭐', '(x)'], 'unknown characters stay single tokens; spaces go');
+  assert.deepEqual(tokenizeMarks(undefined, symbols), []);
+  assert.equal(toggleSymbol('*', '!', symbols), '*!');
+  assert.equal(toggleSymbol('*!', '*', symbols), '!');
+  assert.equal(toggleSymbol('***', '*', symbols), '****', 'adding a bad sleep to pain keeps both');
+  assert.equal(toggleSymbol('', '**', symbols), '**');
+  const day = { marks: '*', tags: ['Creatine'] };
+  assert.deepEqual(toggleDayMark(day, 'Pre-workout', symbols), { marks: '*', tags: ['Creatine', 'Pre-workout'] });
+  assert.deepEqual(toggleDayMark(day, 'creatine', symbols), { marks: '*', tags: undefined }, 'case-insensitive, an empty list is dropped');
+  assert.deepEqual(toggleDayMark(day, '!', symbols), { marks: '*!', tags: ['Creatine'] });
+  assert.deepEqual(toggleDayMark(day, '*', symbols), { marks: undefined, tags: ['Creatine'] });
+  assert.equal(dayHasMark(day, 'CREATINE', symbols), true);
+  assert.equal(dayHasMark(day, 'Pre-workout', symbols), false);
+  assert.equal(dayHasMark(day, '*', symbols), true);
+  assert.equal(dayHasMark({ marks: '***' }, '*', symbols), false);
 });

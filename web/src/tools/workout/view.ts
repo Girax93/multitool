@@ -8,23 +8,27 @@ import { currentRoute, navigate, onRouteChange, toolPath } from '../../core/rout
 import { icons } from '../../ui/icons.js';
 import { closePopover, keepPopoverThroughScroll, onContextAction, openPopover } from '../../ui/popover.js';
 import { closeAllSheets, confirmSheet, openSheet } from '../../ui/sheet.js';
-import { chip, openDayEditor, openExercisesEditor, openFootnoteEditor, openNotesEditor, openSetEditor, openWeekEditor, swatches } from './editors.js';
+import { chip, markChips, openDayEditor, type MarkState, openExerciseEditor, openExercisesEditor, openFootnoteEditor, openNotesEditor, openSetEditor, openWeekEditor, swatches } from './editors.js';
 import { cancelInline, commitInline, editInline, inlineTarget, type CommitVia } from './inline.js';
 import {
   addFootnote,
   clean,
   completeSession,
+  dayHasMark,
   displayFootnotes,
   formatSeconds,
   getSet,
+  hasSymbol,
   isNumbered,
+  isWordMark,
   legendColor,
-  noteSuggestions,
   removeFootnote,
   sessionMinutes,
   splitLinks,
   staleSessions,
   toTypedCell,
+  toggleDayMark,
+  toggleSymbol,
   typeSet,
   updateDay,
   updateExercise,
@@ -508,7 +512,13 @@ function openSetMenu(x: number, y: number, service: WorkoutService, ctx: ToolCon
         },
         label,
       );
-    const marks = service.settings.get().marks;
+    // Symbol marks only: they are typed after the reps ("12!"); word marks belong to the day.
+    const marks = service.settings.get().marks.filter((m) => !isWordMark(m.symbol));
+    const symbols = marks.map((m) => m.symbol);
+    const value = cell.v ?? '';
+    const split = value.match(/^([^*!(]*?)([*!(].*)?$/);
+    const base = split?.[1] ?? value;
+    const tail = split?.[2] ?? '';
     replace(
       pop.el,
       h(
@@ -526,10 +536,8 @@ function openSetMenu(x: number, y: number, service: WorkoutService, ctx: ToolCon
           'div',
           { class: 'chips chips-tight' },
           ...marks.map((m) =>
-            chip(m.symbol, (cell.v ?? '').endsWith(m.symbol), () => {
-              const v = cell.v ?? '';
-              const nv = v.endsWith(m.symbol) ? v.slice(0, -m.symbol.length) : v + m.symbol;
-              service.update(weekId, (x) => updateSet(x, day.id, ex.id, pos.index, { v: nv }));
+            chip(m.symbol, hasSymbol(tail, m.symbol, symbols), () => {
+              service.update(weekId, (x) => updateSet(x, day.id, ex.id, pos.index, { v: base + toggleSymbol(tail, m.symbol, symbols) }));
               render();
             }, 'chip-mark'),
           ),
@@ -649,10 +657,8 @@ function openFootnoteMenu(x: number, y: number, service: WorkoutService, weekId:
 
 interface StyleMenuSpec {
   /** Fresh state on every render; undefined closes the menu (the cell is gone). */
-  read(): { style: CellStyle; marks?: string } | undefined;
+  read(): { style: CellStyle; marks?: MarkState } | undefined;
   onStyle(style: CellStyle): void;
-  /** Marks toggled from the legend's list; absent = the cell has no marks. */
-  onMarks?(marks: string): void;
   actions: { label: string; onClick(): void; testid?: string }[];
   /** Testid of the menu root, for the smoke test. */
   testid?: string;
@@ -673,8 +679,7 @@ function openStyleMenu(x: number, y: number, service: WorkoutService, spec: Styl
       pop.close();
       return;
     }
-    const marks = service.settings.get().marks;
-    const current = state.marks ?? '';
+    const marks = state.marks;
     replace(
       pop.el,
       h('div', { class: 'pop-row' }, h('span', { class: 'pop-label' }, 'Colour')),
@@ -682,23 +687,7 @@ function openStyleMenu(x: number, y: number, service: WorkoutService, spec: Styl
         spec.onStyle(style);
         render();
       }),
-      spec.onMarks
-        ? h(
-            'div',
-            { class: 'pop-row' },
-            h('span', { class: 'pop-label' }, 'Marks'),
-            h(
-              'div',
-              { class: 'chips chips-tight' },
-              ...marks.map((m) =>
-                chip(m.symbol, current.endsWith(m.symbol), () => {
-                  spec.onMarks?.(current.endsWith(m.symbol) ? current.slice(0, -m.symbol.length) : current + m.symbol);
-                  render();
-                }, 'chip-mark'),
-              ),
-            ),
-          )
-        : null,
+      marks ? h('div', { class: 'pop-row' }, h('span', { class: 'pop-label' }, 'Marks'), markChips(service, marks, render)) : null,
       h(
         'div',
         { class: 'pop-actions' },
@@ -734,11 +723,19 @@ function openExerciseMenu(x: number, y: number, service: WorkoutService, weekId:
     testid: 'exercise',
     read: () => {
       const f = find();
-      return f ? { style: { c: f.ex.c, star: f.ex.star }, marks: f.ex.marks ?? '' } : undefined;
+      if (!f) return undefined;
+      const symbols = service.settings.get().marks.map((m) => m.symbol);
+      return {
+        style: { c: f.ex.c, star: f.ex.star },
+        marks: {
+          words: false,
+          has: (m) => hasSymbol(f.ex.marks, m, symbols),
+          toggle: (m) => service.update(weekId, (x) => updateExercise(x, exId, { marks: toggleSymbol(find()?.ex.marks, m, symbols) || undefined })),
+        },
+      };
     },
     onStyle: (style) => service.update(weekId, (x) => updateExercise(x, exId, style)),
-    onMarks: (marks) => service.update(weekId, (x) => updateExercise(x, exId, { marks })),
-    actions: [{ label: 'Edit exercises…', testid: 'menu-exercise-editor', onClick: () => openExercisesEditor(service, weekId, exId) }],
+    actions: [{ label: 'Edit exercise…', testid: 'menu-exercise-editor', onClick: () => openExerciseEditor(service, weekId, exId) }],
   });
 }
 
@@ -748,10 +745,22 @@ function openDayMenu(x: number, y: number, service: WorkoutService, weekId: stri
     testid: 'day',
     read: () => {
       const day = service.get(weekId)?.days.find((d) => d.id === dayId);
-      return day ? { style: { c: day.c, star: day.star }, marks: day.marks ?? '' } : undefined;
+      if (!day) return undefined;
+      const symbols = service.settings.get().marks.map((m) => m.symbol);
+      return {
+        style: { c: day.c, star: day.star },
+        marks: {
+          words: true,
+          has: (m) => dayHasMark(day, m, symbols),
+          toggle: (m) =>
+            service.update(weekId, (x) => {
+              const cur = x.days.find((d) => d.id === dayId);
+              return cur ? updateDay(x, dayId, toggleDayMark(cur, m, symbols)) : x;
+            }),
+        },
+      };
     },
     onStyle: (style) => service.update(weekId, (x) => updateDay(x, dayId, style)),
-    onMarks: (marks) => service.update(weekId, (x) => updateDay(x, dayId, { marks })),
     actions: [{ label: 'Edit day…', testid: 'menu-day-editor', onClick: () => openDayEditor(service, weekId, dayId) }],
   });
 }
@@ -804,13 +813,14 @@ export function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week
   const headRow = h('tr', null, corner);
   for (const ex of week.exercises) {
     // Header lines: name / weight, time (+ marks) / note — empty lines are left out (Ari, 2026-09-24).
-    const facts = [ex.weight?.trim(), ex.timedSec ? formatSeconds(ex.timedSec) : ''].filter((x): x is string => !!x).join(', ');
+    // "24kg, 8–12 reps, 1:30" — weight, target reps, hold time; whatever is set
+    const facts = [ex.weight?.trim(), ex.reps?.trim() ? `${ex.reps.trim()} reps` : '', ex.timedSec ? formatSeconds(ex.timedSec) : ''].filter((x): x is string => !!x).join(', ');
     const th = h(
       'th',
       { colSpan: ex.sets, class: 'wk-ex', dataset: { ex: ex.id } },
       h(
         'button',
-        { class: 'wk-hbtn', dataset: { ex: ex.id, testid: 'exercise-header' }, title: 'Tap to edit the exercise (weight, rest, timing); right-click or hold for colours and marks', onClick: () => openExercisesEditor(service, week.id, ex.id) },
+        { class: 'wk-hbtn', dataset: { ex: ex.id, testid: 'exercise-header' }, title: 'Tap to edit the exercise (weight, rest, timing); right-click or hold for colours and marks', onClick: () => openExerciseEditor(service, week.id, ex.id) },
         h('span', { class: 'wk-ex-name' }, ex.name || 'Exercise'),
         facts || ex.marks ? h('span', { class: 'wk-ex-weight', dataset: { testid: 'exercise-facts' } }, facts, ex.marks ? h('span', { class: 'wk-marks' }, `${facts ? ' ' : ''}${ex.marks}`) : null) : null,
         ex.note?.trim() ? h('span', { class: 'wk-ex-note', dataset: { testid: 'exercise-note' } }, ex.note.trim()) : null,
@@ -839,6 +849,8 @@ export function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week
         : day.date
           ? h('span', { class: 'wk-day-bw' }, day.date.slice(5))
           : null,
+      // word marks ticked on the day ("Pre-workout"), for tracking
+      day.tags?.length ? h('span', { class: 'wk-tags', dataset: { testid: 'day-tags' } }, ...day.tags.map((t) => h('span', { class: 'wk-tag' }, t))) : null,
     );
     const th = h('th', { class: 'wk-dayh' }, dayBtn);
     onContextAction(th, (x, y) => openDayMenu(x, y, service, week.id, day.id));
@@ -907,8 +919,6 @@ export function renderGrid(service: WorkoutService, ctx: ToolContext, week: Week
               multiline: true,
               placeholder: 'Notes for this day',
               testid: 'notes-inline',
-              // things written on other days ("Pre-workout"), offered as you type
-              suggestions: noteSuggestions(service.weeks.get()),
               onCommit: (text) => {
                 if (text.trim() !== (day.notes ?? '').trim()) service.update(week.id, (x) => updateDay(x, day.id, { notes: text.trim() }));
               },

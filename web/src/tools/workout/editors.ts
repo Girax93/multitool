@@ -15,12 +15,13 @@ import {
   clearDay,
   clearWeek,
   dayHasHappened,
+  dayHasMark,
   footnotesFor,
   getSet,
   isNumbered,
+  isWordMark,
   moveExercise,
   nextFootnoteNumber,
-  noteSuggestions,
   numberedFootnotes,
   removeDay,
   removeExercise,
@@ -28,8 +29,8 @@ import {
   setDayDate,
   setDayWeekday,
   setExerciseWeight,
-  splitNotePieces,
   toIsoDate,
+  toggleDayMark,
   toggleRef,
   updateDay,
   updateExercise,
@@ -85,26 +86,70 @@ export function linkHint(): HTMLElement {
   return h('p', { class: 'muted field-hint' }, 'Links: paste a URL, or write [text](https://…).');
 }
 
-/**
- * Chips with things written in day notes before ("Pre-workout", "Coffee"):
- * a tap adds one to the field, after a comma when there is text already.
- * Pieces the field already holds are left out.
- */
-export function noteChips(service: WorkoutService, field: HTMLTextAreaElement | HTMLInputElement, max = 8): HTMLElement | null {
-  const present = new Set(splitNotePieces(field.value).map((p) => p.toLowerCase()));
-  const pieces = noteSuggestions(service.weeks.get()).filter((p) => !present.has(p.toLowerCase())).slice(0, max);
-  if (!pieces.length) return null;
-  const row = h('div', { class: 'chips chips-tight', dataset: { testid: 'note-chips' } });
-  for (const piece of pieces) {
-    const c = chip(piece, false, () => {
-      const v = field.value.trimEnd();
-      field.value = v ? (v.endsWith(',') ? `${v} ${piece}` : `${v}, ${piece}`) : piece;
-      field.dispatchEvent(new Event('input'));
-      c.remove();
-      field.focus();
-      field.setSelectionRange(field.value.length, field.value.length);
-    });
+// ---- Marks ----------------------------------------------------------------------
+//
+// Marks come from the tool's list (Settings → Workout → Marks). Symbols ("*",
+// "!") go on set cells, exercise headers and days, concatenated like the
+// sheet; word marks ("Pre-workout") are reusable tags ticked on a day so days
+// can be tracked by them (Ari, 2026-09-25: "specific marks that I want to add
+// for tracking purposes, that I might reuse").
+
+/** What the chips act on: has / toggle for one cell; `words` when word marks apply (a day). */
+export interface MarkState {
+  has(symbol: string): boolean;
+  toggle(symbol: string): void;
+  words: boolean;
+}
+
+/** Chips for every mark in the list (symbols only unless `state.words`); a day gets "+ New mark", which adds to the list and ticks it. */
+export function markChips(service: WorkoutService, state: MarkState, rerender: () => void): HTMLElement {
+  const marks = service.settings.get().marks.filter((m) => m.symbol.trim() && (state.words || !isWordMark(m.symbol)));
+  const row = h('div', { class: 'chips chips-tight', dataset: { testid: 'mark-chips' } });
+  for (const m of marks) {
+    const c = chip(m.symbol, state.has(m.symbol), () => {
+      state.toggle(m.symbol);
+      rerender();
+    }, isWordMark(m.symbol) ? 'chip-tag' : 'chip-mark');
+    if (m.meaning) c.title = m.meaning;
     row.appendChild(c);
+  }
+  if (state.words) {
+    const input = h('input', {
+      type: 'text',
+      class: 'input input-sm chip-input',
+      placeholder: 'New mark, e.g. Pre-workout',
+      hidden: true,
+      autocomplete: 'off',
+      dataset: { testid: 'mark-new-input' },
+    });
+    const add = (): void => {
+      const sym = service.addMark(input.value);
+      input.value = '';
+      if (!sym) return;
+      if (!state.has(sym)) state.toggle(sym);
+      rerender();
+    };
+    input.addEventListener('keydown', (ev: Event) => {
+      const e = ev as KeyboardEvent;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        add();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        input.value = '';
+        input.hidden = true;
+      }
+    });
+    input.addEventListener('blur', () => {
+      if (input.value.trim()) add();
+      else input.hidden = true;
+    });
+    const plus = chip('+ New mark', false, () => {
+      input.hidden = false;
+      input.focus();
+    }, 'chip-add');
+    plus.dataset['testid'] = 'mark-new';
+    row.append(plus, input);
   }
   return row;
 }
@@ -407,18 +452,24 @@ export function openDayEditor(service: WorkoutService, weekId: string, dayId: st
       const n = parseFloat(bw.value);
       service.update(weekId, (x) => updateDay(x, dayId, { bodyweight: Number.isFinite(n) ? n : undefined }));
     });
-    const marks = h('input', { type: 'text', class: 'input', placeholder: 'e.g. * (bad sleep)', value: day.marks ?? '' });
+    // Marks: tick word marks and symbols from the list (or add a new one); the symbols also sit in a free field.
+    const symbols = settings.marks.map((m) => m.symbol);
+    const marks = h('input', { type: 'text', class: 'input input-short', placeholder: 'symbols', title: 'Symbol marks as typed in the sheet, e.g. * (bad sleep)', value: day.marks ?? '', dataset: { testid: 'day-marks' } });
     marks.addEventListener('input', () => service.update(weekId, (x) => updateDay(x, dayId, { marks: marks.value })));
-    const markChips = h(
-      'div',
-      { class: 'chips' },
-      ...settings.marks.map((m) =>
-        chip(m.symbol, false, () => {
-          marks.value = marks.value.endsWith(m.symbol) ? marks.value.slice(0, -m.symbol.length) : marks.value + m.symbol;
-          marks.dispatchEvent(new Event('input'));
-        }, 'chip-mark'),
-      ),
+    const dayMarks = markChips(
+      service,
+      {
+        words: true,
+        has: (m) => dayHasMark(service.get(weekId)?.days.find((d) => d.id === dayId) ?? day, m, symbols),
+        toggle: (m) =>
+          service.update(weekId, (x) => {
+            const cur = x.days.find((d) => d.id === dayId);
+            return cur ? updateDay(x, dayId, toggleDayMark(cur, m, symbols)) : x;
+          }),
+      },
+      render,
     );
+    dayMarks.appendChild(marks); // the raw symbols, for anything the chips do not cover
     const notes = h('textarea', { class: 'input textarea', rows: 3, placeholder: 'Notes for this day', value: day.notes ?? '' });
     notes.addEventListener('input', () => service.update(weekId, (x) => updateDay(x, dayId, { notes: notes.value })));
     // Worked out, but not with the tracked exercises: name it and the row shows that instead of the sets.
@@ -446,10 +497,8 @@ export function openDayEditor(service: WorkoutService, weekId: string, dayId: st
       h('div', { class: 'field-col' }, h('span', { class: 'field-label' }, 'Weekday'), weekdayChips),
       field('Date', dateInput),
       settings.trackBodyweight ? field(`Bodyweight (${settings.unit})`, bw) : null,
-      field('Marks', marks),
-      markChips,
+      h('div', { class: 'field-col' }, h('span', { class: 'field-label' }, 'Marks'), dayMarks),
       field('Notes', notes),
-      noteChips(service, notes),
       h('div', { class: 'chips chips-tight' }, linkChip(notes)),
       h(
         'div',
@@ -524,7 +573,6 @@ export function openNotesEditor(service: WorkoutService, weekId: string, dayId: 
     replace(
       sheet.body,
       notes,
-      noteChips(service, notes),
       h('div', { class: 'chips chips-tight' }, linkChip(notes)),
       linkHint(),
       h('div', { class: 'editor-row' }, h('span', { class: 'editor-label' }, 'Colour'), swatches(service, day.notesStyle ?? {}, (style) => {
@@ -542,10 +590,309 @@ export function openNotesEditor(service: WorkoutService, weekId: string, dayId: 
   return sheet;
 }
 
-// ---- Exercises editor ------------------------------------------------------------
+// ---- Exercise editors ------------------------------------------------------------
+//
+// One compact form per exercise, grouped the way Ari asked (2026-09-25):
+//   Exercise  name · stats as (library entry, with a shortcut to its muscles) · note under the name
+//   Weight    kg · ×1 / ×2 dumbbells or Bodyweight + share · sets · target reps · timed hold
+//   Timer     rest after each set (or per set) · prep before a hold
+// Tapping an exercise in the grid opens the form for that exercise alone
+// (`openExerciseEditor`); the week's list of all exercises, with add / move /
+// remove, is `openExercisesEditor` (week menu, "Add exercises").
 
+/** The form for one exercise; `rerender` rebuilds the sheet after a structural change (per-set rests, load rule, sets). */
+function exerciseForm(service: WorkoutService, weekId: string, ex: Exercise, rerender: () => void): HTMLElement {
+  const settings = service.settings.get();
+  const session = settings.session;
+  const patch = (p: Partial<Omit<Exercise, 'id'>>): void => {
+    service.update(weekId, (x) => updateExercise(x, ex.id, p));
+  };
+  /** The exercise as it is now (the sheet may not have re-rendered since a change). */
+  const current = (): Exercise => service.get(weekId)?.exercises.find((e) => e.id === ex.id) ?? ex;
+  const muted = (text: string): HTMLElement => h('span', { class: 'muted-inline' }, text);
+  const item = (...children: (HTMLElement | null)[]): HTMLElement => h('span', { class: 'exf-item' }, ...children);
+
+  // ---- Exercise: name, library entry, note
+  const name = h('input', { type: 'text', class: 'input exf-grow', placeholder: 'Exercise', value: ex.name, dataset: { ex: ex.id, testid: 'exercise-name' } });
+  name.addEventListener('input', () => patch({ name: name.value }));
+  const matched = matchLibrary(ex, settings.library);
+  const libSel = h(
+    'select',
+    { class: 'input input-sm ex-lib', 'aria-label': 'Library exercise', title: 'Which library exercise this counts as in the stats (muscle groups, load)', dataset: { testid: 'exercise-lib' } },
+    h('option', { value: '' }, matched && !ex.lib ? `↔ ${matched.name} (matched by name)` : 'Not in the library'),
+    ...settings.library.map((e) => h('option', { value: e.id }, e.name)),
+  );
+  libSel.value = ex.lib ?? '';
+  libSel.addEventListener('change', () => {
+    patch({ lib: libSel.value || undefined });
+    rerender();
+  });
+  const libEdit = h(
+    'button',
+    {
+      type: 'button',
+      class: 'iconbtn iconbtn-sm',
+      title: matched ? `Muscle groups and load of “${matched.name}” (library)` : 'Add to the library: muscle groups and load for the stats',
+      'aria-label': 'Edit in the library',
+      dataset: { testid: 'exercise-lib-edit' },
+      onClick: () => openLibraryEditor(service, service.ensureLibraryEntry(weekId, current()).id, rerender),
+    },
+    svg(icons.edit),
+  );
+  const note = h('input', { type: 'text', class: 'input exf-full', placeholder: 'Note under the name (optional)', value: ex.note ?? '', dataset: { testid: 'exercise-note' } });
+  note.addEventListener('input', () => patch({ note: note.value }));
+
+  // ---- Weight: kg, how a rep is weighed (library load rule), sets, reps, timed
+  const load: LoadRule = matched?.load ?? { kind: 'external', dumbbells: 1 };
+  const bodyweight = load.kind === 'bodyweight';
+  // A changed weight turns the header purple (the sheet's "weight increased") and becomes the library's default.
+  const weight = h('input', {
+    type: 'text',
+    class: 'input input-short',
+    placeholder: bodyweight ? '+ kg' : 'weight',
+    title: bodyweight ? 'Weight added on top of the bodyweight (a dumbbell held), if any' : 'The weight written under the name, e.g. 24kg',
+    value: ex.weight,
+    dataset: { testid: 'exercise-weight' },
+  });
+  weight.addEventListener('input', () => {
+    const previous = service.previousWeight(weekId, ex);
+    service.update(weekId, (x) => setExerciseWeight(x, ex.id, weight.value, previous));
+  });
+  weight.addEventListener('change', () => service.rememberWeight(current(), weight.value));
+  const dumbbells = h(
+    'select',
+    { class: 'input input-sm exf-select', 'aria-label': 'Dumbbells moved per rep', title: 'A dumbbell in each hand counts the weight twice per rep', hidden: bodyweight, dataset: { testid: 'exercise-dumbbells' } },
+    h('option', { value: '1' }, '× 1 dumbbell'),
+    h('option', { value: '2' }, '× 2 dumbbells'),
+    h('option', { value: 'none' }, 'no load'),
+  );
+  dumbbells.value = load.kind === 'external' ? String(load.dumbbells) : load.kind === 'none' ? 'none' : '1';
+  dumbbells.addEventListener('change', () => {
+    service.setExerciseLoad(weekId, current(), dumbbells.value === 'none' ? { kind: 'none' } : { kind: 'external', dumbbells: dumbbells.value === '2' ? 2 : 1 });
+    rerender();
+  });
+  const bwChip = chip(
+    'Bodyweight',
+    bodyweight,
+    () => {
+      service.setExerciseLoad(weekId, current(), bodyweight ? { kind: 'external', dumbbells: 1 } : { kind: 'bodyweight', factor: matched?.load.kind === 'bodyweight' ? matched.load.factor : 1 });
+      rerender();
+    },
+    'chip-toggle',
+  );
+  bwChip.dataset['testid'] = 'exercise-bodyweight';
+  bwChip.title = 'The rep moves a share of your bodyweight (from the day’s weigh-in, else the last one logged), plus any kg written';
+  const pct = h('input', {
+    type: 'number',
+    class: 'input input-num input-xs',
+    inputMode: 'numeric',
+    min: '1',
+    max: '150',
+    step: '1',
+    value: bodyweight ? String(Math.round(load.factor * 100)) : '100',
+    'aria-label': 'Share of bodyweight moved per rep',
+    dataset: { testid: 'exercise-bw-factor' },
+  });
+  pct.addEventListener('change', () => {
+    const v = parseFloat(pct.value);
+    if (v > 0) service.setExerciseLoad(weekId, current(), { kind: 'bodyweight', factor: Math.round(v) / 100 });
+    else pct.value = bodyweight ? String(Math.round(load.factor * 100)) : '100';
+  });
+  const pctItem = item(pct, muted('% of bodyweight'));
+  pctItem.hidden = !bodyweight;
+  pctItem.title = 'A push-up moves about 64 %, a squat 85 %, a pull-up or a handstand 100 %';
+  const sets = h('input', { type: 'number', class: 'input input-num input-xs', inputMode: 'numeric', min: 1, max: 10, value: String(ex.sets), 'aria-label': 'Sets', dataset: { testid: 'exercise-sets' } });
+  sets.addEventListener('change', () => {
+    const n = Math.min(10, Math.max(1, parseInt(sets.value, 10) || 1));
+    patch({ sets: n });
+    rerender();
+  });
+  // Target reps per set ("8–12"), shown on the header's facts line.
+  const reps = h('input', { type: 'text', class: 'input input-xs', placeholder: '8–12', value: ex.reps ?? '', 'aria-label': 'Target reps per set', title: 'Target reps per set, e.g. 8–12; shown under the name', dataset: { testid: 'exercise-reps' } });
+  reps.addEventListener('input', () => patch({ reps: reps.value }));
+  const repsItem = item(muted('Reps'), reps);
+  repsItem.hidden = !!ex.timedSec; // a hold has a time, not reps
+  // Timed sets (handstand holds): workout mode counts the work time down before the rest.
+  const timed = h('input', { type: 'checkbox', checked: !!ex.timedSec, dataset: { testid: 'exercise-timed' } });
+  const work = h('input', {
+    type: 'text',
+    class: 'input input-short',
+    inputMode: 'numeric',
+    placeholder: '1:30',
+    value: ex.timedSec ? formatSeconds(ex.timedSec) : '',
+    hidden: !ex.timedSec,
+    'aria-label': 'Hold per set',
+    title: 'How long each hold lasts',
+    dataset: { testid: 'exercise-work' },
+  });
+  work.addEventListener('change', () => {
+    const sec = parseSeconds(work.value);
+    if (sec && sec > 0) patch({ timedSec: sec });
+    else work.value = current().timedSec ? formatSeconds(current().timedSec ?? 0) : '';
+  });
+
+  // ---- Timer: rest after a set (one value, or one per set), prep before a hold
+  const restField = (value: number | undefined, label: string, onChange: (sec: number | undefined) => void, testid: string): HTMLElement => {
+    const input = h('input', {
+      type: 'text',
+      class: 'input input-short',
+      inputMode: 'numeric',
+      placeholder: formatSeconds(session.restSec),
+      value: value !== undefined ? formatSeconds(value) : '',
+      'aria-label': label,
+      dataset: { testid },
+    });
+    input.addEventListener('change', () => {
+      const sec = input.value.trim() ? parseSeconds(input.value) : null;
+      const ok = sec !== null && sec > 0;
+      onChange(ok ? sec : undefined);
+      input.value = ok ? formatSeconds(sec) : '';
+    });
+    return input;
+  };
+  let restItem: HTMLElement;
+  if (ex.restPerSet?.length) {
+    const fields: HTMLElement[] = [];
+    for (let k = 0; k < ex.sets; k++) {
+      fields.push(
+        h(
+          'span',
+          { class: 'ex-rest-set' },
+          muted(`${k + 1}`),
+          restField(ex.restPerSet?.[k] ?? ex.restSec, `Rest after set ${k + 1}`, (sec) => {
+            service.update(weekId, (x) => {
+              const cur = x.exercises.find((e) => e.id === ex.id);
+              const list: (number | undefined)[] = Array.from({ length: cur?.sets ?? ex.sets }, (_, j) => cur?.restPerSet?.[j]);
+              list[k] = sec;
+              return updateExercise(x, ex.id, { restPerSet: list });
+            });
+          }, 'exercise-rest-set'),
+        ),
+      );
+    }
+    restItem = item(
+      muted('Rest'),
+      ...fields,
+      h('button', { type: 'button', class: 'btn btn-sm btn-text', dataset: { testid: 'exercise-rest-same' }, title: 'One rest for every set', onClick: () => { patch({ restPerSet: undefined }); rerender(); } }, 'Same for all'),
+    );
+  } else {
+    restItem = item(
+      muted('Rest'),
+      restField(ex.restSec, 'Rest after each set', (sec) => patch({ restSec: sec }), 'exercise-rest'),
+      muted('after each set'),
+      h(
+        'button',
+        {
+          type: 'button',
+          class: 'btn btn-sm btn-text',
+          dataset: { testid: 'exercise-rest-per-set' },
+          title: 'A different rest after each set',
+          onClick: () => {
+            service.update(weekId, (x) => {
+              const cur = x.exercises.find((e) => e.id === ex.id);
+              return updateExercise(x, ex.id, { restPerSet: Array.from({ length: cur?.sets ?? ex.sets }, () => cur?.restSec ?? session.restSec) });
+            });
+            rerender();
+          },
+        },
+        'Per set',
+      ),
+    );
+  }
+  const prep = h('input', {
+    type: 'text',
+    class: 'input input-short',
+    inputMode: 'numeric',
+    placeholder: formatSeconds(session.prepSec),
+    value: ex.prepSec !== undefined ? formatSeconds(ex.prepSec) : '',
+    'aria-label': 'Prep before each hold',
+    dataset: { testid: 'exercise-prep' },
+  });
+  prep.addEventListener('change', () => {
+    const sec = prep.value.trim() ? parseSeconds(prep.value) : null;
+    patch({ prepSec: sec !== null && sec >= 0 ? sec : undefined });
+    prep.value = sec !== null && sec >= 0 ? formatSeconds(sec) : '';
+  });
+  const prepItem = item(muted('Prep'), prep, muted('before each hold'));
+  prepItem.hidden = !ex.timedSec;
+  prepItem.dataset['testid'] = 'exercise-prep-row';
+  timed.addEventListener('change', () => {
+    const sec = timed.checked ? (parseSeconds(work.value) ?? session.workSec) : undefined;
+    patch({ timedSec: sec });
+    work.hidden = !timed.checked;
+    prepItem.hidden = !timed.checked;
+    repsItem.hidden = timed.checked;
+    if (timed.checked) {
+      work.value = formatSeconds(sec ?? 0);
+      work.focus();
+    }
+  });
+
+  return h(
+    'div',
+    { class: 'exf', dataset: { testid: 'exercise-form', ex: ex.id } },
+    h('span', { class: 'exf-label' }, 'Exercise'),
+    h('div', { class: 'exf-fields' }, name, h('span', { class: 'exf-item exf-grow' }, muted('Stats as'), libSel, libEdit), note),
+    h('span', { class: 'exf-label' }, 'Weight'),
+    h(
+      'div',
+      { class: 'exf-fields' },
+      item(weight, dumbbells, bwChip),
+      pctItem,
+      item(muted('Sets'), sets),
+      repsItem,
+      item(h('label', { class: 'check check-inline', title: 'Each set is a timed hold; workout mode counts it down' }, timed, h('span', null, 'Timed')), work),
+    ),
+    h('span', { class: 'exf-label' }, 'Timer'),
+    h('div', { class: 'exf-fields' }, restItem, prepItem),
+  );
+}
+
+/** One exercise on its own: what a tap on its header cell opens (Ari: "only show that exercise"). */
+export function openExerciseEditor(service: WorkoutService, weekId: string, exId: string): Sheet {
+  const sheet = openSheet({ title: 'Exercise', class: 'sheet-exercise' });
+  const render = (): void => {
+    const w = service.get(weekId);
+    const ex = w?.exercises.find((e) => e.id === exId);
+    if (!w || !ex) {
+      sheet.close();
+      return;
+    }
+    sheet.setTitle(ex.name.trim() || 'Exercise');
+    const form = exerciseForm(service, weekId, ex, render);
+    form.querySelector<HTMLInputElement>('[data-testid="exercise-name"]')?.addEventListener('input', (e) => sheet.setTitle((e.target as HTMLInputElement).value.trim() || 'Exercise'));
+    replace(
+      sheet.body,
+      form,
+      h(
+        'div',
+        { class: 'row row-between sheet-actions' },
+        h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn btn-text btn-danger-text',
+            dataset: { testid: 'exercise-remove' },
+            onClick: async () => {
+              if (await confirmSheet(`Remove “${ex.name || 'this exercise'}” from this week (its sets and notes go too)?`, 'Remove')) {
+                service.update(weekId, (x) => removeExercise(x, ex.id));
+                sheet.close();
+              }
+            },
+          },
+          'Remove from this week',
+        ),
+        h('button', { type: 'button', class: 'btn btn-primary', dataset: { testid: 'exercise-done' }, onClick: () => sheet.close() }, 'Done'),
+      ),
+    );
+  };
+  render();
+  return sheet;
+}
+
+/** Every exercise of the week: add (from the library or blank), reorder, remove; each with the same form. */
 export function openExercisesEditor(service: WorkoutService, weekId: string, focusId?: string): Sheet {
-  const sheet = openSheet({ title: 'Exercises this week' });
+  const sheet = openSheet({ title: 'Exercises this week', class: 'sheet-exercise' });
   let focus = focusId;
   const render = (): void => {
     const w = service.get(weekId);
@@ -602,174 +949,11 @@ export function openExercisesEditor(service: WorkoutService, weekId: string, foc
     }
   };
 
-  const exerciseRow = (w: Week, ex: Exercise, i: number): HTMLElement => {
-    const name = h('input', { type: 'text', class: 'input', placeholder: 'Exercise', value: ex.name, dataset: { ex: ex.id, testid: 'exercise-name' } });
-    name.addEventListener('input', () => service.update(weekId, (x) => updateExercise(x, ex.id, { name: name.value })));
-    // A changed weight turns the header purple (the sheet's "weight increased")
-    // and, once typed, becomes the library's default for this exercise.
-    const weight = h('input', { type: 'text', class: 'input input-short', placeholder: 'weight', value: ex.weight, dataset: { testid: 'exercise-weight' } });
-    weight.addEventListener('input', () => {
-      const previous = service.previousWeight(weekId, ex);
-      service.update(weekId, (x) => setExerciseWeight(x, ex.id, weight.value, previous));
-    });
-    weight.addEventListener('change', () => service.rememberWeight(ex, weight.value));
-    const sets = h('input', { type: 'number', class: 'input input-num input-short', inputMode: 'numeric', min: 1, max: 10, value: String(ex.sets), 'aria-label': 'Sets' });
-    sets.addEventListener('change', () => {
-      const n = Math.min(10, Math.max(1, parseInt(sets.value, 10) || 1));
-      service.update(weekId, (x) => updateExercise(x, ex.id, { sets: n }));
-      render();
-    });
-    // Timed sets (handstand holds): workout mode counts the work time down before the rest.
-    const timed = h('input', { type: 'checkbox', checked: !!ex.timedSec, dataset: { testid: 'exercise-timed' } });
-    const work = h('input', {
-      type: 'text',
-      class: 'input input-short',
-      inputMode: 'numeric',
-      placeholder: '1:30',
-      value: ex.timedSec ? formatSeconds(ex.timedSec) : '',
-      hidden: !ex.timedSec,
-      'aria-label': 'Work time per set',
-      dataset: { testid: 'exercise-work' },
-    });
-    timed.addEventListener('change', () => {
-      const sec = timed.checked ? (parseSeconds(work.value) ?? service.settings.get().session.workSec) : undefined;
-      service.update(weekId, (x) => updateExercise(x, ex.id, { timedSec: sec }));
-      work.hidden = !timed.checked;
-      if (timed.checked) {
-        work.value = formatSeconds(sec ?? 0);
-        work.focus();
-      }
-    });
-    work.addEventListener('change', () => {
-      const sec = parseSeconds(work.value);
-      if (sec && sec > 0) service.update(weekId, (x) => updateExercise(x, ex.id, { timedSec: sec }));
-      else work.value = ex.timedSec ? formatSeconds(ex.timedSec) : '';
-    });
-    // Prep before a timed hold (get into position); empty = the tool's default.
-    const session = service.settings.get().session;
-    const prep = h('input', {
-      type: 'text',
-      class: 'input input-short',
-      inputMode: 'numeric',
-      placeholder: formatSeconds(session.prepSec),
-      value: ex.prepSec !== undefined ? formatSeconds(ex.prepSec) : '',
-      'aria-label': 'Prep before each hold',
-      dataset: { testid: 'exercise-prep' },
-    });
-    prep.addEventListener('change', () => {
-      const sec = prep.value.trim() ? parseSeconds(prep.value) : null;
-      service.update(weekId, (x) => updateExercise(x, ex.id, { prepSec: sec !== null && sec >= 0 ? sec : undefined }));
-      prep.value = sec !== null && sec >= 0 ? formatSeconds(sec) : '';
-    });
-    const prepRow = h('div', { class: 'row', hidden: !ex.timedSec, dataset: { testid: 'exercise-prep-row' } }, h('span', { class: 'muted-inline' }, 'Prep'), prep, h('span', { class: 'muted-inline' }, 'before each hold'));
-    timed.addEventListener('change', () => {
-      prepRow.hidden = !timed.checked;
-    });
-    // A standing remark under the weight in the header ("x = wall, y = bench, z = floor").
-    const note = h('input', { type: 'text', class: 'input', placeholder: 'Note under the name (optional)', value: ex.note ?? '', dataset: { testid: 'exercise-note' } });
-    note.addEventListener('input', () => service.update(weekId, (x) => updateExercise(x, ex.id, { note: note.value })));
-    // Rest after a set: one value for the exercise, or one per set ("Per set"); empty = the tool's default.
-    const restField = (value: number | undefined, label: string, onChange: (sec: number | undefined) => void, testid: string): HTMLElement => {
-      const input = h('input', {
-        type: 'text',
-        class: 'input input-short',
-        inputMode: 'numeric',
-        placeholder: formatSeconds(session.restSec),
-        value: value !== undefined ? formatSeconds(value) : '',
-        'aria-label': label,
-        dataset: { testid },
-      });
-      input.addEventListener('change', () => {
-        const sec = input.value.trim() ? parseSeconds(input.value) : null;
-        const ok = sec !== null && sec > 0;
-        onChange(ok ? sec : undefined);
-        input.value = ok ? formatSeconds(sec) : '';
-      });
-      return input;
-    };
-    const perSet = !!ex.restPerSet?.length;
-    let restRow: HTMLElement;
-    if (perSet) {
-      const fields: HTMLElement[] = [];
-      for (let k = 0; k < ex.sets; k++) {
-        fields.push(
-          h(
-            'span',
-            { class: 'ex-rest-set' },
-            h('span', { class: 'muted-inline' }, `${k + 1}`),
-            restField(ex.restPerSet?.[k] ?? ex.restSec, `Rest after set ${k + 1}`, (sec) => {
-              service.update(weekId, (x) => {
-                const cur = x.exercises.find((e) => e.id === ex.id);
-                const list: (number | undefined)[] = Array.from({ length: cur?.sets ?? ex.sets }, (_, j) => cur?.restPerSet?.[j]);
-                list[k] = sec;
-                return updateExercise(x, ex.id, { restPerSet: list });
-              });
-            }, 'exercise-rest-set'),
-          ),
-        );
-      }
-      restRow = h(
-        'div',
-        { class: 'row ex-rest-row' },
-        h('span', { class: 'muted-inline' }, 'Rest'),
-        ...fields,
-        h('button', { type: 'button', class: 'btn btn-sm btn-text', dataset: { testid: 'exercise-rest-same' }, title: 'One rest for every set', onClick: () => { service.update(weekId, (x) => updateExercise(x, ex.id, { restPerSet: undefined })); render(); } }, 'Same for all'),
-      );
-    } else {
-      restRow = h(
-        'div',
-        { class: 'row ex-rest-row' },
-        h('span', { class: 'muted-inline' }, 'Rest'),
-        restField(ex.restSec, 'Rest after each set', (sec) => service.update(weekId, (x) => updateExercise(x, ex.id, { restSec: sec })), 'exercise-rest'),
-        h('span', { class: 'muted-inline' }, 'after each set'),
-        h(
-          'button',
-          {
-            type: 'button',
-            class: 'btn btn-sm btn-text',
-            dataset: { testid: 'exercise-rest-per-set' },
-            title: 'A different rest after each set',
-            onClick: () => {
-              service.update(weekId, (x) => {
-                const cur = x.exercises.find((e) => e.id === ex.id);
-                return updateExercise(x, ex.id, { restPerSet: Array.from({ length: cur?.sets ?? ex.sets }, () => cur?.restSec ?? session.restSec) });
-              });
-              render();
-            },
-          },
-          'Per set',
-        ),
-      );
-    }
-    // Which library entry this is (muscle groups, load for the stats): the link, else the name match.
-    const library = service.settings.get().library;
-    const matched = matchLibrary(ex, library);
-    const libSel = h(
-      'select',
-      { class: 'input input-sm ex-lib', 'aria-label': 'Library exercise', dataset: { testid: 'exercise-lib' } },
-      h('option', { value: '' }, matched && !ex.lib ? `↔ ${matched.name} (matched by name)` : 'Not in the library'),
-      ...library.map((e) => h('option', { value: e.id }, e.name)),
-    );
-    libSel.value = ex.lib ?? '';
-    libSel.addEventListener('change', () => {
-      const lib = libSel.value || undefined;
-      service.update(weekId, (x) => updateExercise(x, ex.id, { lib }));
-      render();
-    });
-    return h(
+  const exerciseRow = (w: Week, ex: Exercise, i: number): HTMLElement =>
+    h(
       'div',
       { class: 'ex-row' },
-      h(
-        'div',
-        { class: 'ex-fields' },
-        name,
-        h('div', { class: 'row' }, weight, h('span', { class: 'muted-inline' }, '×'), sets, h('span', { class: 'muted-inline' }, 'sets')),
-        note,
-        restRow,
-        h('div', { class: 'row' }, h('label', { class: 'check check-inline', title: 'Each set is a timed hold; workout mode counts it down' }, timed, h('span', null, 'Timed sets')), work),
-        prepRow,
-        h('div', { class: 'row ex-lib-row' }, h('span', { class: 'muted-inline' }, 'Stats as'), libSel),
-      ),
+      exerciseForm(service, weekId, ex, render),
       h(
         'div',
         { class: 'ex-actions' },
@@ -792,7 +976,6 @@ export function openExercisesEditor(service: WorkoutService, weekId: string, foc
         ),
       ),
     );
-  };
   render();
   return sheet;
 }

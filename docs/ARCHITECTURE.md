@@ -89,11 +89,17 @@ sheet's "weight increased" — and the same weight takes it off again
 (`setExerciseWeight`; a colour picked by hand is left alone; the purple is
 not copied into the next week, the weight is). The weight also becomes the
 library entry's `weight`, which the picker writes on the exercise the next
-time it is added to a week. A day's notes get suggestions
-(`noteSuggestions`): every short comma- or line-separated piece written in a
-day note before, newest first; the inline editor lists them under the field
-filtered by the piece being typed (`inline.ts` `suggestions`, ↑ ↓ Enter / Tab
-or a tap), the day editor shows them as chips. The log keeps its scroll position across
+time it is added to a week. **Marks** come from one list in the tool settings
+(`WorkoutSettings.marks`): a symbol (`*`, `!`, `(x)`) is typed after a set or
+concatenated on a day / exercise header like the sheet (`tokenizeMarks`
+splits such a string longest-symbol-first, so `***` is pain and `*!` two
+marks), while a mark that starts with a letter or digit (`isWordMark`:
+"Pre-workout", "Creatine") is a reusable tag ticked on a day and stored in
+`DayEntry.tags` — the day editor and the day cell's menu show every mark as a
+chip (`markChips` in `editors.ts`; "+ New mark" adds one to the list and ticks
+it), the day cell draws the tags as pills, and the stats page counts the days
+per tag (`tagTotals`, "Marks" card). Notes are free text, without suggestions
+(an earlier drop-down was a misunderstanding). The log keeps its scroll position across
 re-renders and scrolls to the current week only when the user navigates; it
 opens on the newest week. `[label](url)` and bare URLs in notes render as
 links (opened through the native bridge). A new week counts on from the
@@ -149,8 +155,18 @@ the remaining sets. After a countdown rings the panel counts the overrun
 controller's state lives in `ui/session` (per device: phase, timer id,
 sequence by ids, stopwatch, `startedAt`), so a reload comes back to the same
 countdown, stopwatch or sequence; a countdown that rang while the page was
-away is settled on restore. The header shows name / weight, time / note
-(`Exercise.note`), empty lines left out.
+away is settled on restore. The header shows name / weight, reps, time / note
+(`Exercise.note`, `Exercise.reps` = the target rep range), empty lines left
+out. Tapping a header opens **that exercise alone** (`openExerciseEditor`,
+2026-09-25; the week's whole list with add / move / remove is
+`openExercisesEditor`, from the week menu and "Add exercises"): one compact
+form (`exerciseForm`) in three groups — *Exercise* (name, "Stats as" library
+entry with a pencil into the library editor, note), *Weight* (kg, "× 1 / × 2
+dumbbells / no load" or the Bodyweight chip with a share in %, sets, target
+reps, timed hold), *Timer* (rest after each set or per set, prep before a
+hold). The dumbbells / Bodyweight controls edit the library entry's load rule
+(`service.setExerciseLoad`), creating a blank entry for an exercise the
+library does not know, so his own calculations live in one place.
 
 A workout is completed explicitly (`DaySession.done`, `completeSession`):
 the idle panel has a "Complete workout" button while a session is open; the
@@ -170,9 +186,12 @@ built-ins arrive). An entry has muscle groups with a role (a set counts fully
 for a main mover, half for a helper — `roleWeight`), a load rule (`external`
 with 1 or 2 dumbbells moved at once, `bodyweight` with a share of the day's
 bodyweight plus whatever weight is written on the exercise, or `none` for a
-hold) and other names it had in the log. A week's exercise links to an entry
-with `Exercise.lib` (set when it is added from the picker, or chosen in the
-exercises editor); without a link the name matches by slug against the
+drill; a timed hold keeps its bodyweight share and counts it once per set,
+since the number in its cell is falls or seconds) and other names it had in
+the log. A week's exercise links to an entry with `Exercise.lib` (set when it
+is added from the picker, chosen in the exercise editor, or created by
+`ensureLibraryEntry` when a load rule is set on an exercise the library does
+not know); without a link the name matches by slug against the
 entry's id, name and aliases, which is how the imported history ("NO BENCH:
 Dumbbell Rows", "+1 step Chest Press") lands on the right entries. The
 bodyweight shares are rounded force-plate figures (push-up 64 %, feet
@@ -282,5 +301,9 @@ against a real instance of the same code.
 - Widgets: data path exists (`publishWidgetState`), UI not yet built.
 - Sync resolves conflicts per record by last write; simultaneous edits of the
   same week on two devices keep the later one (no merge, no conflict copy).
-- Timers sync including their running state, so a timer started on one device
-  also rings on the others; dismissing it anywhere stops it everywhere.
+- Timers sync including their running state; a run carries the installation
+  id of the device that started it (`Timer.device`, `core/device.ts`
+  `installationId`), and only that device schedules the alarm and rings — the
+  others list it as "on Android app" and can still pause, extend or dismiss
+  it (a resume or restart elsewhere hands the run to that device). Records
+  from older app versions have no device and ring everywhere.

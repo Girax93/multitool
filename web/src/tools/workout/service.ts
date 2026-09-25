@@ -21,7 +21,7 @@ import {
   type Week,
   type WorkoutSettings,
 } from './model.js';
-import { matchLibrary, withDefaultWeight } from './library.js';
+import { matchLibrary, slug, withDefaultWeight, type LibraryExercise, type LoadRule } from './library.js';
 
 const WEEK_PREFIX = 'weeks/';
 const SETTINGS_KEY = 'settings';
@@ -261,6 +261,49 @@ export class WorkoutService {
     const entry = matchLibrary(ex, s.library);
     if (!entry || (entry.weight ?? '') === weight.trim()) return;
     void this.updateSettings({ library: withDefaultWeight(s.library, entry.id, weight) });
+  }
+
+  /**
+   * The library entry an exercise counts as, created when there is none: a
+   * blank entry named after the exercise (no muscle groups yet), linked with
+   * `Exercise.lib`. Used when a load rule ("Bodyweight", "×2 dumbbells") is
+   * set from the exercise editor — Ari: "make my own calculations for
+   * exercises I don't already have".
+   */
+  ensureLibraryEntry(weekId: string, ex: Exercise): LibraryExercise {
+    const s = this.settings.get();
+    const found = matchLibrary(ex, s.library);
+    if (found) {
+      if (!ex.lib) this.update(weekId, (x) => ({ ...x, exercises: x.exercises.map((e) => (e.id === ex.id ? { ...e, lib: found.id } : e)) }));
+      return found;
+    }
+    const base = slug(ex.name || 'exercise');
+    let id = base;
+    for (let n = 2; s.library.some((e) => e.id === id); n++) id = `${base}-${n}`;
+    const entry: LibraryExercise = { id, name: ex.name.trim() || 'Exercise', muscles: [], load: { kind: 'external', dumbbells: 1 }, sets: ex.sets };
+    if (ex.timedSec) entry.timedSec = ex.timedSec;
+    if (ex.weight.trim()) entry.weight = ex.weight.trim();
+    void this.updateSettings({ library: [...s.library, entry] });
+    this.update(weekId, (x) => ({ ...x, exercises: x.exercises.map((e) => (e.id === ex.id ? { ...e, lib: id } : e)) }));
+    return entry;
+  }
+
+  /** How the stats weigh a rep of this exercise (its library entry's rule), set from the exercise editor. */
+  setExerciseLoad(weekId: string, ex: Exercise, load: LoadRule): void {
+    const entry = this.ensureLibraryEntry(weekId, ex);
+    const library = this.settings.get().library;
+    void this.updateSettings({ library: library.map((e) => (e.id === entry.id ? { ...e, load } : e)) });
+  }
+
+  /** Add a mark to the tool's list (a word like "Pre-workout", or a symbol); an existing one is returned. */
+  addMark(symbol: string, meaning = ''): string | undefined {
+    const m = symbol.trim();
+    if (!m) return undefined;
+    const marks = this.settings.get().marks;
+    const existing = marks.find((x) => x.symbol.toLowerCase() === m.toLowerCase());
+    if (existing) return existing.symbol;
+    void this.updateSettings({ marks: [...marks, { symbol: m, meaning: meaning.trim() }] });
+    return m;
   }
 
   /**

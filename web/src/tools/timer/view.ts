@@ -254,11 +254,18 @@ class TimerCard {
     );
   }
 
+  /** "1m 30s · saved · on Android app" — the device tag only while the run belongs to another device. */
+  private metaText(t: Timer): string {
+    const elsewhere = t.state !== 'idle' && !this.service.mine(t) && t.deviceName ? ` · on ${t.deviceName}` : '';
+    return `${formatDuration(t.durationMs)}${t.saved ? ' · saved' : ''}${elsewhere}`;
+  }
+
   update(t: Timer, now: number): void {
     this.nameEl.textContent = t.name;
-    this.meta.textContent = `${formatDuration(t.durationMs)}${t.saved ? ' · saved' : ''}`;
+    this.meta.textContent = this.metaText(t);
     this.el.dataset.state = t.state;
-    this.el.classList.toggle('ringing', t.state === 'finished');
+    // a timer that finished on another device is "done" here, not ringing (it rings there)
+    this.el.classList.toggle('ringing', t.state === 'finished' && this.service.mine(t));
     if (this.state !== t.state) {
       this.state = t.state;
       this.renderActions(t);
@@ -274,7 +281,7 @@ class TimerCard {
     if (t.state === 'running' && t.endsAt !== undefined) {
       const ends = new Date(t.endsAt);
       const sameDay = ends.toDateString() === new Date(now).toDateString();
-      this.meta.textContent = `${formatDuration(t.durationMs)}${t.saved ? ' · saved' : ''} · ends ${
+      this.meta.textContent = `${this.metaText(t)} · ends ${
         sameDay ? ends.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ends.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })
       }`;
     }

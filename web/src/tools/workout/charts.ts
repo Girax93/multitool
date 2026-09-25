@@ -346,6 +346,8 @@ export interface BarChartOpts {
   yAtLeast?: number;
   /** Text after the value in tooltips. */
   unit?: string;
+  /** Bars never grow wider than this (a chart with two categories would otherwise be two slabs). */
+  maxBarWidth?: number;
   xLabel?: string;
   yLabel?: string;
   height?: number;
@@ -393,11 +395,11 @@ export function barChart(opts: BarChartOpts): ChartHost {
       const baseY = yPos(0);
       const every = labelEvery(slot, 30);
       const bars = s('g');
-      const groupW = Math.max(2, slot - 2);
+      const groupW = Math.min(opts.maxBarWidth ?? Infinity, Math.max(2, slot - 2));
       const perBar = opts.stacked ? groupW : Math.max(1, (groupW - 2 * (opts.series.length - 1)) / opts.series.length);
       opts.categories.forEach((c, i) => {
         if (i + 1 < a - 1 || i > b + 1) return;
-        const x0 = xOf(i) + 1;
+        const x0 = xOf(i) + 1 + (slot - 2 - groupW) / 2; // centred in its slot when capped
         if (c.empty) {
           bars.appendChild(s('rect', { x: xOf(i), y: MARGIN.top, width: slot, height: plotH, class: 'chart-empty-col' }));
           bars.appendChild(s('rect', { x: x0, y: baseY - 2, width: groupW, height: 2, class: 'chart-empty-tick' }));

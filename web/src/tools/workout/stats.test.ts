@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { DEFAULT_SETTINGS, addExercise, newWeek, sessionMinutes, touchSession, updateDay, updateSet, type Week } from './model.js';
 import { DEFAULT_LIBRARY } from './library.js';
 import {
+  tagTotals,
   bodyweightOn,
   bodyweightSeries,
   calendarMonth,
@@ -250,4 +251,24 @@ test('muscle groups and volume come from the library and the day\'s bodyweight',
   assert.equal(rows[0]?.volume, 571 + 428);
   // catalogue folds the renamed chest press into the library entry
   assert.deepEqual(exerciseCatalogue([a], DEFAULT_LIBRARY).map((e) => [e.id, e.name]), [['pistol-squats', 'Pistol Squats'], ['chest-press', 'Chest Press']]);
+});
+
+test('tagTotals counts the days per word mark in the range, newest date first', () => {
+  const mk = (id: string, startDate: string, days: { date: string; tags?: string[] }[]): Week => ({
+    id,
+    label: id,
+    startDate,
+    createdAt: 0,
+    exercises: [],
+    days: days.map((d, i) => ({ id: `${id}-${i}`, weekday: 'Mon', date: d.date, cells: {}, ...(d.tags ? { tags: d.tags } : {}) })),
+    footnotes: {},
+  });
+  const weeks = [
+    mk('w1', '2026-09-07', [{ date: '2026-09-07', tags: ['Pre-workout'] }, { date: '2026-09-09' }, { date: '2026-09-11', tags: ['pre-workout', 'Creatine'] }]),
+    mk('w2', '2026-09-14', [{ date: '2026-09-14', tags: ['Pre-workout'] }]),
+    mk('w0', '2026-08-31', [{ date: '2026-08-31', tags: ['Creatine'] }]),
+  ];
+  const totals = tagTotals(weeks, { from: '2026-09-07', to: '2026-09-14' });
+  assert.deepEqual(totals.map((t) => [t.tag, t.days, t.dates[0], t.weekId]), [['Pre-workout', 3, '2026-09-14', 'w2'], ['Creatine', 1, '2026-09-11', 'w1']]);
+  assert.deepEqual(tagTotals(weeks, { from: '2026-08-31', to: '2026-08-31' }).map((t) => [t.tag, t.days]), [['Creatine', 1]]);
 });

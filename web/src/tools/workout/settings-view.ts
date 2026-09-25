@@ -175,7 +175,7 @@ export function renderWorkoutSettings(service: WorkoutService, ctx: ToolContext)
   renderMarks();
   const marks = section(
     'Marks',
-    h('p', { class: 'muted' }, 'Short symbols you can add to any set, day or note. They combine freely (e.g. 12!*).'),
+    h('p', { class: 'muted' }, 'Symbols (*, !) go after a set or on a day and combine freely (12!*). A mark that is a word (Pre-workout, Creatine) is a tag you tick on a day — in the day editor or its long-press menu, where "+ New mark" adds one on the spot — so days can be tracked by it.'),
     markList,
     h(
       'button',

@@ -39,7 +39,9 @@ test('history names land on the right library entries', () => {
 test('load per rep: dumbbells, bodyweight shares, holds', () => {
   const lib = DEFAULT_LIBRARY;
   const e = (id: string) => lib.find((x) => x.id === id);
-  assert.equal(loadPerRep(e('dumbbell-rows'), 26, 84), 26);
+  assert.equal(loadPerRep(e('dumbbell-rows'), 26, 84), 52); // a dumbbell in each hand
+  assert.equal(loadPerRep(e('bicep-curls'), 14, 84), 28); // one arm at a time, a rep per arm
+  assert.equal(loadPerRep(e('triceps-ext'), 24, 84), 24); // one dumbbell in both hands
   assert.equal(loadPerRep(e('chest-press'), 24, 84), 48);
   assert.equal(loadPerRep(e('chest-press'), 24, 84, 20), 40); // "(20)" in the cell
   assert.equal(loadPerRep(e('chest-press'), undefined, 84), undefined);
@@ -50,7 +52,7 @@ test('load per rep: dumbbells, bodyweight shares, holds', () => {
   assert.equal(loadPerRep(e('push-ups'), undefined, 84), 53.8);
   assert.equal(loadPerRep(e('decline-push-ups'), undefined, 84), 63);
   assert.equal(loadPerRep(e('handstand-push-ups'), undefined, 84), 79.8);
-  assert.equal(loadPerRep(e('handstand-practice'), undefined, 84), undefined);
+  assert.equal(loadPerRep(e('handstand-practice'), undefined, 84), 84); // a hold carries the whole bodyweight
   assert.equal(loadPerRep(undefined, 20, 84), 20); // unknown exercise: what was written
   assert.equal(describeEntry(e('push-ups')!), 'Chest, Triceps + Shoulders, Core · 64 % of bodyweight');
   assert.equal(describeEntry(e('chest-press')!), 'Chest + Triceps, Shoulders · 2 dumbbells');

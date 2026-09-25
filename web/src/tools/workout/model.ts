@@ -18,6 +18,12 @@ export interface LegendEntry {
   color: string;
 }
 
+/**
+ * A mark from the tool's list. Symbols ("*", "!") are typed after a set or
+ * concatenated on a day / exercise header, like the sheet; a word ("Pre-workout")
+ * is a reusable tag ticked on a day (`DayEntry.tags`) so days can be tracked
+ * and compared by it. Which one it is follows from the text (`isWordMark`).
+ */
 export interface MarkDef {
   symbol: string;
   meaning: string;
@@ -74,6 +80,8 @@ export interface Exercise extends CellStyle {
   /** Free text, e.g. "24kg". */
   weight: string;
   sets: number;
+  /** Target reps per set, free text ("8–12", "10"); shown on the header's facts line. */
+  reps?: string;
   /**
    * A timed exercise (handstand holds): each set is `timedSec` seconds of
    * work, which workout mode counts down before the rest. Absent = reps.
@@ -99,8 +107,10 @@ export interface DayEntry extends CellStyle {
   /** ISO date (YYYY-MM-DD) when known. */
   date?: string;
   bodyweight?: number;
-  /** Free-text marks for the whole day, e.g. "*" (bad sleep). */
+  /** Symbol marks for the whole day, e.g. "*" (bad sleep), concatenated like the sheet. */
   marks?: string;
+  /** Word marks ticked from the tool's mark list ("Pre-workout"), for tracking; never symbols. */
+  tags?: string[];
   notes?: string;
   notesStyle?: CellStyle;
   /**
@@ -297,10 +307,10 @@ export function newWeek(input: NewWeekInput): Week {
     if (previous?.startDate) startDate = addDays(previous.startDate, 7);
     else startDate = mondayOf(new Date(input.now));
   }
-  // The plan carries over (name, weight, sets, timing, rests, note, library link); colours and marks are the week's own.
+  // The plan carries over (name, weight, reps, sets, timing, rests, note, library link); colours and marks are the week's own.
   const exercises: Exercise[] = previous
     ? previous.exercises.map((e) =>
-        clean({ id: e.id, name: e.name, weight: e.weight, sets: e.sets, timedSec: e.timedSec, lib: e.lib, note: e.note, restSec: e.restSec, restPerSet: e.restPerSet ? [...e.restPerSet] : undefined, prepSec: e.prepSec }),
+        clean({ id: e.id, name: e.name, weight: e.weight, sets: e.sets, reps: e.reps, timedSec: e.timedSec, lib: e.lib, note: e.note, restSec: e.restSec, restPerSet: e.restPerSet ? [...e.restPerSet] : undefined, prepSec: e.prepSec }),
       )
     : [];
   const days = settings.defaultDays.map((wd, i) => newDay(input.dayIds[i] ?? `${input.id}-${wd}`, wd, startDate, exercises));
@@ -358,7 +368,7 @@ export function weekHasContent(week: Week): boolean {
   if (week.notes?.trim() || week.c || week.star) return true;
   if (Object.values(week.footnotes).some((list) => list.some((f) => f.text.trim() !== ''))) return true;
   return week.days.some(
-    (d) => dayTrained(d) || !!d.notes?.trim() || !!d.marks?.trim() || d.bodyweight !== undefined || !!d.c || !!d.star,
+    (d) => dayTrained(d) || !!d.notes?.trim() || !!d.marks?.trim() || !!d.tags?.length || d.bodyweight !== undefined || !!d.c || !!d.star,
   );
 }
 
@@ -538,40 +548,64 @@ export function setExerciseWeight(week: Week, exId: string, weight: string, prev
   return updateExercise(week, exId, patch);
 }
 
-// ---- Day-note suggestions -------------------------------------------------------
+// ---- Marks -------------------------------------------------------------------
 
-/** Longest piece of a day note that is offered again as a suggestion. */
-export const NOTE_PIECE_MAX = 32;
-
-/** The short pieces of a note: what sits between commas or line breaks, without links. */
-export function splitNotePieces(text: string | undefined): string[] {
-  return (text ?? '')
-    .split(/[,\n]/)
-    .map((p) => p.trim())
-    .filter((p) => p !== '' && p.length <= NOTE_PIECE_MAX && !hasLink(p));
+/** A mark that is a word ("Pre-workout", "Creatine") rather than a symbol ("*", "!", "(x)"): it starts with a letter or digit. */
+export function isWordMark(symbol: string): boolean {
+  return /^[\p{L}\p{N}]/u.test(symbol.trim());
 }
 
 /**
- * Things written in day notes before ("Pre-workout", "Coffee"), for the
- * drop-down / auto-complete when a day's notes are typed: every short piece
- * between commas or line breaks, most recently used first, one entry per
- * spelling (case-insensitive, the latest spelling wins).
+ * Split a symbol string the way the sheet reads it: the longest known symbol
+ * first ("***" is pain, not three bad sleeps; "*!" is bad sleep + hard), a
+ * character nobody defined stays its own token ("⭐"). Spaces are dropped.
  */
-export function noteSuggestions(weeks: Week[], limit = 60): string[] {
-  const seen = new Map<string, string>();
-  const ordered = sortWeeks(weeks);
-  for (let i = ordered.length - 1; i >= 0 && seen.size < limit; i--) {
-    const w = ordered[i];
-    if (!w) continue;
-    const days = sortDays(w.days).reverse();
-    for (const d of days) {
-      for (const piece of splitNotePieces(d.notes)) {
-        const k = piece.toLowerCase();
-        if (!seen.has(k)) seen.set(k, piece);
-      }
-    }
+export function tokenizeMarks(text: string | undefined, symbols: string[]): string[] {
+  const known = [...new Set(symbols.filter((x) => x && !isWordMark(x)))].sort((a, b) => b.length - a.length);
+  const out: string[] = [];
+  let rest = (text ?? '').replace(/\s+/g, '');
+  while (rest) {
+    const hit = known.find((k) => rest.startsWith(k));
+    const tok = hit ?? [...rest][0] ?? '';
+    out.push(tok);
+    rest = rest.slice(tok.length);
   }
-  return [...seen.values()].slice(0, limit);
+  return out;
+}
+
+/** Does a day / header carry the symbol (as a whole token)? */
+export function hasSymbol(text: string | undefined, symbol: string, symbols: string[]): boolean {
+  return tokenizeMarks(text, symbols).includes(symbol);
+}
+
+/** Add the symbol when absent, drop it when present; the rest keeps its order. */
+export function toggleSymbol(text: string | undefined, symbol: string, symbols: string[]): string {
+  const tokens = tokenizeMarks(text, symbols);
+  const i = tokens.indexOf(symbol);
+  if (i >= 0) tokens.splice(i, 1);
+  else tokens.push(symbol);
+  return tokens.join('');
+}
+
+/** Toggle one mark on a day: a word goes in and out of `tags` (case-insensitive), a symbol in and out of `marks`. */
+export function toggleDayMark(day: Pick<DayEntry, 'marks' | 'tags'>, mark: string, symbols: string[]): Pick<DayEntry, 'marks' | 'tags'> {
+  const m = mark.trim();
+  if (!m) return { marks: day.marks, tags: day.tags };
+  if (isWordMark(m)) {
+    const tags = day.tags ?? [];
+    const has = tags.some((t) => t.toLowerCase() === m.toLowerCase());
+    const next = has ? tags.filter((t) => t.toLowerCase() !== m.toLowerCase()) : [...tags, m];
+    return { marks: day.marks, tags: next.length ? next : undefined };
+  }
+  const marks = toggleSymbol(day.marks, m, symbols);
+  return { marks: marks || undefined, tags: day.tags };
+}
+
+/** Is the mark on the day? */
+export function dayHasMark(day: Pick<DayEntry, 'marks' | 'tags'>, mark: string, symbols: string[]): boolean {
+  const m = mark.trim();
+  if (isWordMark(m)) return (day.tags ?? []).some((t) => t.toLowerCase() === m.toLowerCase());
+  return hasSymbol(day.marks, m, symbols);
 }
 
 // ---- Days ------------------------------------------------------------------

@@ -30,6 +30,7 @@ import {
   muscleWeekly,
   statsRange,
   summarize,
+  tagTotals,
   volumeWeekly,
   weeklyActivity,
   type DayActivity,
@@ -168,6 +169,7 @@ export function renderStats(service: WorkoutService): HTMLElement {
         renderMuscleLines(service, weeks, rangeOf('muscles'), pref, library, openSlot),
         renderMuscleShare(service, weeks, rangeOf('muscle-share'), pref, library),
         renderExerciseShare(service, weeks, rangeOf('exercise-share'), library),
+        renderTags(service, weeks, rangeOf('tags'), openWeek),
         renderExerciseCard(service, weeks, rangeOf('exercise'), pref, library, openSlot),
         renderBodyweight(service, weeks, rangeOf('weight'), unit, days, openDay),
         renderDuration(service, weeks, rangeOf('duration'), days, openDay),
@@ -589,6 +591,48 @@ function renderExerciseShare(service: WorkoutService, weeks: Week[], range: Stat
   const slices: Slice[] = totals.map((t, i) => ({ name: t.name, value: t.sets, color: CAT(i), detail: `${fmtNum(t.reps)} reps${t.load ? ` · ${fmtNum(t.load)} kg moved` : ''}` }));
   const donut = donutChart({ testid: 'donut-exercises', unit: 'sets', maxSlices: 7, slices });
   return card('Exercises share', 'stats-exercise-share', cardRange(service, 'exercise-share'), h('p', { class: 'muted stats-note' }, 'Sets per exercise in the range.'), donut.root);
+}
+
+// ---- Marks (word marks ticked on days) -------------------------------------------------
+
+function renderTags(service: WorkoutService, weeks: Week[], range: StatsRange, openWeek: (weekId: string) => void): HTMLElement {
+  const totals = tagTotals(weeks, range);
+  if (!totals.length) {
+    return card(
+      'Marks',
+      'stats-tags',
+      cardRange(service, 'tags'),
+      h('p', { class: 'muted' }, 'No word marks on days in this range. Tick one on a day (day editor, or hold the day cell) — "+ New mark" adds one, e.g. Pre-workout — and the days carrying it are counted here.'),
+    );
+  }
+  const chart = barChart({
+    testid: 'chart-tags',
+    categories: totals.map((t) => ({ key: t.tag, label: t.tag, title: t.tag })),
+    series: [{ name: 'days', color: COLOR.tracked, values: totals.map((t) => t.days) }],
+    yAtLeast: 3,
+    unit: 'days',
+    maxBarWidth: 64,
+    xLabel: 'Mark',
+    yLabel: 'days',
+    height: 200,
+    onSelect: (i) => {
+      const id = totals[i]?.weekId;
+      if (id) openWeek(id);
+    },
+  });
+  const list = h(
+    'div',
+    { class: 'stats-taglist', dataset: { testid: 'stats-taglist' } },
+    ...totals.map((t) =>
+      h(
+        'button',
+        { type: 'button', class: 'stats-tagrow', title: 'Open the week of the latest day with this mark', onClick: () => { if (t.weekId) openWeek(t.weekId); } },
+        h('span', { class: 'wk-tag' }, t.tag),
+        h('span', { class: 'muted' }, `${t.days} ${t.days === 1 ? 'day' : 'days'} · last ${t.dates[0] ?? ''}`),
+      ),
+    ),
+  );
+  return card('Marks', 'stats-tags', cardRange(service, 'tags'), h('p', { class: 'muted stats-note' }, 'Days carrying each word mark in the range. Tap a bar or a row to open the week of the latest one.'), chart.root, list);
 }
 
 // ---- Exercise progression ---------------------------------------------------------------

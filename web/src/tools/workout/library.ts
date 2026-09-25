@@ -11,7 +11,9 @@
 //   bodyweight — a share of the day's bodyweight (a push-up moves about 64 %
 //                of it, a squat about 85 %, a pull-up all of it), plus any
 //                weight written on the exercise ("2kg" on pistol squats);
-//   none       — a hold or a drill without a load (handstand practice).
+//   none       — a drill without a load (a mobility routine, say).
+// A timed hold (handstand practice) keeps a bodyweight share too: each set
+// counts that load once, since the number in its cell is falls or seconds.
 // The shares are rounded estimates from force-plate studies (Ebben et al.
 // 2011 for push-up variants) and segment masses; each entry says so in its
 // note, and every number can be edited in Settings → Exercises.
@@ -98,9 +100,9 @@ export const DEFAULT_LIBRARY: LibraryExercise[] = [
     name: 'Dumbbell Rows',
     aliases: ['Dumbbell Rows', 'BENCH: (1st set without) Dumbbell Rows', 'NO BENCH: Dumbbell Rows', 'BENCH: Dumbbell Rows'],
     muscles: [P('back'), S('biceps'), S('shoulders')],
-    load: ext(1),
+    load: ext(2),
     sets: 3,
-    note: 'One-arm row: the dumbbell weight per rep (one dumbbell at a time).',
+    note: 'A dumbbell in each hand (Ari, 2026-09-25): twice the written weight per rep.',
     builtin: true,
   },
   {
@@ -117,11 +119,11 @@ export const DEFAULT_LIBRARY: LibraryExercise[] = [
     id: 'handstand-practice',
     name: 'Handstand practice',
     aliases: ['1.5min Handstand practice!', '1min Handstand practice!', 'Handstand practice'],
-    muscles: [P('shoulders'), S('core'), S('triceps'), S('forearms')],
-    load: { kind: 'none' },
+    muscles: [P('shoulders'), S('triceps'), S('forearms'), S('core')],
+    load: bw(1),
     timedSec: 90,
     sets: 3,
-    note: 'A timed hold: counts as sets for the muscle groups, no load per rep.',
+    note: 'A timed hold: the hands carry the whole bodyweight (feet against the wall take at most a few percent), the shoulders do the work, triceps lock the elbows, forearms and wrists balance, the core keeps the line. Each hold counts once as that load (not the number in the cell, which is falls or seconds).',
     builtin: true,
   },
   {
@@ -129,9 +131,9 @@ export const DEFAULT_LIBRARY: LibraryExercise[] = [
     name: 'Bicep Curls',
     aliases: ['Bicep Curls', 'Bench Bicep Curls', 'Arn. Bicep Curls', 'Bicep Curl (alternating)'],
     muscles: [P('biceps'), S('forearms')],
-    load: ext(1),
+    load: ext(2),
     sets: 3,
-    note: 'The dumbbell weight per rep (each arm counts its own reps).',
+    note: 'One arm at a time, a logged rep is one rep per arm (Ari, 2026-09-25): twice the written weight per rep — 14 kg per arm counts as 28 kg.',
     builtin: true,
   },
   {
@@ -152,7 +154,7 @@ export const DEFAULT_LIBRARY: LibraryExercise[] = [
     muscles: [P('triceps')],
     load: ext(1),
     sets: 3,
-    note: 'Overhead extension with one dumbbell held in both hands.',
+    note: 'One dumbbell held behind the back and lifted overhead (Ari, 2026-09-25): the written weight per rep.',
     builtin: true,
   },
   {
@@ -385,8 +387,8 @@ export function describeEntry(e: LibraryExercise): string {
   const prim = e.muscles.filter((m) => m.role === 'primary').map((m) => muscleLabel(m.group));
   const sec = e.muscles.filter((m) => m.role === 'secondary').map((m) => muscleLabel(m.group));
   const muscles = [prim.join(', '), sec.length ? `+ ${sec.join(', ')}` : ''].filter(Boolean).join(' ');
-  const load = e.load.kind === 'external' ? (e.load.dumbbells === 2 ? '2 dumbbells' : 'dumbbell') : e.load.kind === 'bodyweight' ? `${Math.round(e.load.factor * 100)} % of bodyweight` : e.timedSec ? 'timed hold' : 'no load';
-  return `${muscles} · ${load}${e.weight ? ` · ${e.weight}` : ''}`;
+  const load = e.load.kind === 'external' ? (e.load.dumbbells === 2 ? '2 dumbbells' : 'dumbbell') : e.load.kind === 'bodyweight' ? `${Math.round(e.load.factor * 100)} % of bodyweight` : 'no load';
+  return `${muscles} · ${load}${e.timedSec ? ' · timed hold' : ''}${e.weight ? ` · ${e.weight}` : ''}`;
 }
 
 /** The library with `weight` remembered on one entry (the last weight used, for the next time it is added to a week). */
